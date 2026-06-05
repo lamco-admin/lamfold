@@ -20,7 +20,7 @@ homepage.workspace = true
 # `std` is host-test only; the default build is no_std + alloc. Each codec is
 # opt-in so a bootloader build pulls only what its media needs; the default is
 # batteries-included (all five).
-default = ["std", "codec-deflate", "codec-lz4", "codec-zstd", "codec-xz", "codec-lzo"]
+default = ["std", "verify", "codec-deflate", "codec-lz4", "codec-zstd", "codec-xz", "codec-lzo"]
 std = []
 codec-deflate = ["dep:miniz_oxide"]
 codec-lz4 = ["dep:lz4_flex"]

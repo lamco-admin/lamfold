@@ -32,6 +32,8 @@ mod frontend;
 mod read_cap;
 mod source;
 mod verify;
+#[cfg(feature = "verify")]
+mod verity;
 
 pub use cache::BlockCache;
 pub use codec::{decode, Codec};
@@ -42,3 +44,5 @@ pub use read_cap::{
 };
 pub use source::{BlockSource, SliceSource};
 pub use verify::{NoVerifier, Verifier};
+#[cfg(feature = "verify")]
+pub use verity::{fsverity_digest_sha256, MerkleVerifier, Sha256Digest, DEFAULT_BLOCK_LOG};

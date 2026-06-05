@@ -1,0 +1,28 @@
+# Copyright 2026 Lamco Development LLC — MIT OR Apache-2.0.
+# The EROFS frontend of the lamfold stack. Clean-roomed from the public EROFS
+# on-disk format (kernel erofs_fs.h is itself SPDX MIT); see NOTICE and
+# the lamfold design spec §4.
+
+[package]
+name = "lamfold-erofs"
+description = "no_std clean-room EROFS reader — the lamfold forward-standard frontend, with the fs-verity integrity story"
+readme = "README.md"
+keywords = ["erofs", "filesystem", "no_std", "fs-verity", "composefs"]
+categories = ["filesystem", "no-std"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+# Uncompressed EROFS needs no codec; the integrity story (the shepherd) is on by
+# default. Compressed clusters (lz4/lzma/zstd/deflate) are a later stage.
+default = ["std", "verity"]
+std = ["lamfold/std"]
+verity = ["lamfold/verify"]
+
+[dependencies]
+lamfold = { workspace = true }
