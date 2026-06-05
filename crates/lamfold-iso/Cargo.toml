@@ -1,0 +1,27 @@
+# Copyright 2026 Lamco Development LLC — MIT OR Apache-2.0.
+# The optical frontend (ISO9660 + Rock Ridge/Joliet/El Torito/zisofs) of the
+# lamfold stack. Clean-roomed from ECMA-119 / IEEE P1281+P1282 / El Torito; see
+# NOTICE and the lamfold design spec §4. Supersedes `lamoptical`.
+
+[package]
+name = "lamfold-iso"
+description = "no_std clean-room ISO9660 (+Rock Ridge/Joliet/El Torito) reader — the lamfold optical frontend"
+readme = "README.md"
+keywords = ["iso9660", "filesystem", "no_std", "uefi", "optical"]
+categories = ["filesystem", "no-std"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["std"]
+std = ["lamfold/std"]
+# zisofs (transparent per-file Deflate) — pulls the substrate's deflate codec.
+zisofs = ["lamfold/codec-deflate"]
+
+[dependencies]
+lamfold = { workspace = true }

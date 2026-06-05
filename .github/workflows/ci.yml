@@ -1,0 +1,17 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with: { components: rustfmt, clippy, rust-src }
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: no_std build (substrate, all codecs)
+        run: cargo build -p lamfold --no-default-features --features codec-deflate,codec-lz4,codec-zstd,codec-xz,codec-lzo
+      - name: no_std build (iso frontend)
+        run: cargo build -p lamfold-iso --no-default-features
+      - uses: EmbarkStudios/cargo-deny-action@v2

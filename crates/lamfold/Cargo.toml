@@ -1,0 +1,44 @@
+# Copyright 2026 Lamco Development LLC — MIT OR Apache-2.0.
+# The substrate core of the lamfold read-only media stack. See ../../Cargo.toml
+# (the workspace) and the lamfold design spec.
+
+[package]
+name = "lamfold"
+description = "no_std read-only media filesystem stack — substrate core (codec registry, immutable-block cache, bounded zero-copy parse, frontend trait, integrity-verification seam)"
+readme = "README.md"
+keywords = ["filesystem", "read-only", "no_std", "iso9660", "squashfs"]
+categories = ["filesystem", "no-std"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+# `std` is host-test only; the default build is no_std + alloc. Each codec is
+# opt-in so a bootloader build pulls only what its media needs; the default is
+# batteries-included (all five).
+default = ["std", "codec-deflate", "codec-lz4", "codec-zstd", "codec-xz", "codec-lzo"]
+std = []
+codec-deflate = ["dep:miniz_oxide"]
+codec-lz4 = ["dep:lz4_flex"]
+codec-zstd = ["dep:ruzstd"]
+codec-xz = ["dep:lzma-rust2"]
+codec-lzo = ["dep:lzokay"]
+verify = ["dep:sha2"]
+
+[dependencies]
+zerocopy.workspace = true
+heapless.workspace = true
+miniz_oxide = { workspace = true, optional = true }
+lz4_flex = { workspace = true, optional = true }
+ruzstd = { workspace = true, optional = true }
+lzma-rust2 = { workspace = true, optional = true }
+lzokay = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The lzo round-trip test needs lzokay's encoder; production stays decode-only.
+lzokay = { workspace = true, features = ["compress", "decompress", "alloc"] }

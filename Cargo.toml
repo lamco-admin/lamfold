@@ -1,0 +1,42 @@
+# lamfold — read-only media filesystem stack (a metacrate workspace).
+#
+# One repo, many published crates: the `lamfold` substrate core plus thin
+# clean-room format frontends (lamfold-iso, -udf, -squash, -erofs, …). Same
+# shape as the lamco-wayland / lamco-rdp workspaces: a virtual workspace with
+# members under crates/*, shared metadata in [workspace.package], and the pinned
+# dependency set declared ONCE in [workspace.dependencies]. Spec:
+# the lamfold design spec.
+
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = [
+    "Greg Lamberson <greg@lamco.io>",
+    "Lamco Development LLC <office@lamco.io>",
+]
+repository = "https://github.com/lamco-admin/lamfold"
+homepage = "https://lamco.ai/products/lamboot/"
+
+[workspace.dependencies]
+# --- the substrate core (internal member; frontends depend on it) ---
+lamfold = { path = "crates/lamfold", default-features = false }
+
+# --- L2 parse substrate ---
+zerocopy = { version = "=0.8.50", default-features = false, features = ["derive"] }
+heapless = { version = "=0.9.3", default-features = false }
+
+# --- L2 codec registry (all permissive no_std; members add `optional = true`) ---
+miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
+lz4_flex = { version = "=0.13.1", default-features = false, features = ["safe-decode", "safe-encode"] }
+ruzstd = { version = "=0.8.3", default-features = false }
+lzma-rust2 = { version = "=0.16.4", default-features = false, features = ["xz"] }
+lzokay = { version = "=2.0.1", default-features = false, features = ["decompress", "alloc"] }
+
+# --- shepherd (integrity) ---
+sha2 = { version = "0.10", default-features = false }

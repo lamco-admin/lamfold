@@ -1,0 +1,27 @@
+lamfold-iso — third-party attribution
+
+lamfold-iso is original Lamco Development work (MIT OR Apache-2.0), clean-roomed
+from public specifications:
+
+  ECMA-119 (ISO 9660), 4th edition (2019)        — base + Joliet (normative Annex C)
+  IEEE P1281 (SUSP) + P1282 (Rock Ridge), Draft 1.12
+  El Torito Bootable CD-ROM Format Specification v1.0
+
+Permissive implementations consulted ONLY as architecture references and as test
+oracles (never copied):
+
+  iso9660-rs (morpheusx)   MIT OR Apache-2.0   (no_std reader shape)
+  cdfs (~az1)              MIT OR Apache-2.0   (Rock Ridge structure)
+  FreeBSD cd9660           BSD-2-Clause        (in-kernel read reference)
+
+The following GPL implementations were explicitly FENCED OFF — not read, not
+transcribed — to preserve the clean-room:
+
+  GNU libcdio / libiso9660   GPLv3-or-later
+  Linux kernel fs/isofs      GPL-2.0
+  genisoimage / cdrtools     GPL
+
+Test fixtures are generated with xorriso (a tool, not a source); the on-disk
+bytes are data, not code.
+
+M0 license-gate audit: the project license audit
