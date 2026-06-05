@@ -1,0 +1,30 @@
+lamfold-squash — third-party attribution
+
+lamfold-squash is original Lamco Development work (MIT OR Apache-2.0),
+clean-roomed from the public SquashFS 4.0 on-disk format:
+
+  SquashFS Binary Format — kernel Documentation/filesystems/squashfs.rst
+                           + the community-maintained format description
+  (superblock, compressed 8 KiB metadata blocks, inode/directory tables,
+   data blocks, the shared fragment table)
+
+Permissive implementations consulted ONLY as architecture references and as test
+oracles (never copied):
+
+  backhand (wcampbell)     MIT          (no_std-friendly reader shape)
+  squashfs-ng deku notes   permissive   (field-layout cross-check)
+
+The following GPL implementations were explicitly FENCED OFF — not read, not
+transcribed — to preserve the clean-room:
+
+  Linux kernel fs/squashfs   GPL-2.0
+  squashfs-tools (mksquashfs/unsquashfs)   GPL-2.0
+
+Compression is delegated to the lamfold substrate codec registry (all permissive:
+miniz_oxide / lz4_flex / ruzstd / lzma-rust2 / lzokay); this crate contains no
+compression code of its own.
+
+Test fixtures are generated with mksquashfs (a tool, not a source) and verified
+with unsquashfs as an oracle; the on-disk bytes are data, not code.
+
+M0 license-gate audit: the project license audit

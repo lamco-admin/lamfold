@@ -1,0 +1,31 @@
+# Copyright 2026 Lamco Development LLC — MIT OR Apache-2.0.
+# The SquashFS frontend of the lamfold stack. Clean-roomed from the public
+# SquashFS on-disk format; see NOTICE and the lamfold design spec §4.
+
+[package]
+name = "lamfold-squash"
+description = "no_std clean-room SquashFS reader — the lamfold compressed-read-only frontend (the live-ISO root)"
+readme = "README.md"
+keywords = ["squashfs", "filesystem", "no_std", "compression", "uefi"]
+categories = ["filesystem", "no-std"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+# Each compressor is opt-in (a SquashFS image uses exactly one); the default is
+# batteries-included so any image reads.
+default = ["std", "gzip", "xz", "zstd", "lz4", "lzo"]
+std = ["lamfold/std"]
+gzip = ["lamfold/codec-deflate"]
+xz = ["lamfold/codec-xz"]
+zstd = ["lamfold/codec-zstd"]
+lz4 = ["lamfold/codec-lz4"]
+lzo = ["lamfold/codec-lzo"]
+
+[dependencies]
+lamfold = { workspace = true }
