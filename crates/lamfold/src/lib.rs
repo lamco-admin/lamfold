@@ -29,6 +29,7 @@ mod cache;
 mod codec;
 mod error;
 mod frontend;
+mod path;
 mod read_cap;
 mod source;
 mod verify;
@@ -39,6 +40,7 @@ pub use cache::BlockCache;
 pub use codec::{decode, Codec};
 pub use error::{FoldError, Result};
 pub use frontend::{DirEntry, FileKind, FoldFrontend, Metadata, NodeId, SubstrateCtx};
+pub use path::{metadata_path, read_dir_path, read_path, resolve, MAX_SYMLINKS};
 pub use read_cap::{
     checked_block_len, checked_full_read_len, MAX_BOOT_FILE_BYTES, MAX_DECOMPRESSED_BLOCK_BYTES,
 };
