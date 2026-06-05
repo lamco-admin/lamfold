@@ -1,0 +1,25 @@
+# Copyright 2026 Lamco Development LLC — MIT OR Apache-2.0.
+# The UDF frontend (ECMA-167 / OSTA UDF 1.02 read) of the lamfold stack.
+# Clean-roomed from the free ECMA-167 + OSTA UDF specs; see NOTICE and
+# the lamfold design spec §4.
+
+[package]
+name = "lamfold-udf"
+description = "no_std clean-room UDF (ECMA-167 / OSTA 1.02) reader — the lamfold optical-UDF frontend"
+readme = "README.md"
+keywords = ["udf", "filesystem", "no_std", "optical", "uefi"]
+categories = ["filesystem", "no-std"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["std"]
+std = ["lamfold/std"]
+
+[dependencies]
+lamfold = { workspace = true }

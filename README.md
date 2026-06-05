@@ -13,8 +13,8 @@ structure it reads. Authoritative spec: `the lamfold design spec`.
 | Crate | Role | Status |
 | ----- | ---- | ------ |
 | [`crates/lamfold`](crates/lamfold) | **substrate core** — codec registry (deflate/lz4/zstd/xz/lzo), immutable-block cache, bounded zero-copy parse + read-cap, `FoldFrontend` trait, the `Verifier` (shepherd) seam | ✅ S0 + S0-cont (18 tests) |
-| [`crates/lamfold-iso`](crates/lamfold-iso) | **optical frontend** — ISO9660 base (+ Rock Ridge / Joliet / El Torito / zisofs to come) | ✅ S1 base (3 tests, real-ISO) |
-| `crates/lamfold-udf` | UDF frontend | planned (S2) |
+| [`crates/lamfold-iso`](crates/lamfold-iso) | **optical frontend** — ISO9660 + Rock Ridge + Joliet + El Torito + zisofs | ✅ complete |
+| [`crates/lamfold-udf`](crates/lamfold-udf) | **UDF frontend** — ECMA-167 / OSTA 1.02 read | ✅ base (real mkudffs image) |
 | `crates/lamfold-squash` | SquashFS frontend (live-ISO root) | planned (S3) |
 | `crates/lamfold-erofs` | EROFS frontend + the integrity layer | planned (S4) |
 
