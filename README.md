@@ -17,6 +17,9 @@ structure it reads. Authoritative spec: `the lamfold design spec`.
 | [`crates/lamfold-udf`](crates/lamfold-udf) | **UDF frontend** — ECMA-167 / OSTA 1.02 read | ✅ base (real mkudffs image) |
 | [`crates/lamfold-squash`](crates/lamfold-squash) | **compressed frontend** — SquashFS 4.0 (gzip/xz/zstd/lz4/lzo), the live-ISO root | ✅ complete (real mksquashfs image) |
 | [`crates/lamfold-erofs`](crates/lamfold-erofs) | **forward-standard frontend** — EROFS (uncompressed) + the shepherd (fs-verity block gating) | ✅ complete (real mkfs.erofs image) |
+| [`crates/lamfold-cramfs`](crates/lamfold-cramfs) | **legacy compressed frontend** — cramfs (per-page zlib) | ✅ complete (real mkcramfs image) |
+| [`crates/lamfold-romfs`](crates/lamfold-romfs) | **minimal-embedded frontend** — Linux romfs (`-rom1fs-`) | ✅ complete (real genromfs image) |
+| [`crates/lamfold-cpio`](crates/lamfold-cpio) | **initramfs frontend** — newc cpio tree (reuses `cpio_reader`) | ✅ complete (real cpio archive) |
 
 Every frontend is a thin member that depends on `lamfold` (the namesake core,
 like the `lamco-wayland` crate within the `lamco-wayland` workspace) and contains

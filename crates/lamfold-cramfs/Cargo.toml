@@ -1,0 +1,25 @@
+# Copyright 2026 Lamco Development LLC — MIT OR Apache-2.0.
+# The cramfs frontend of the lamfold stack. Clean-roomed from the public cramfs
+# on-disk format; see NOTICE and the lamfold design spec §4.
+
+[package]
+name = "lamfold-cramfs"
+description = "no_std clean-room cramfs reader — the lamfold compressed-ROM legacy frontend (per-page zlib)"
+readme = "README.md"
+keywords = ["cramfs", "filesystem", "no_std", "compression", "uefi"]
+categories = ["filesystem", "no-std"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+# cramfs blocks are always zlib; the codec is non-optional here.
+default = ["std"]
+std = ["lamfold/std"]
+
+[dependencies]
+lamfold = { workspace = true, features = ["codec-deflate"] }

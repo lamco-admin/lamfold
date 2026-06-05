@@ -1,0 +1,25 @@
+# Copyright 2026 Lamco Development LLC — MIT OR Apache-2.0.
+# The cpio/initramfs frontend of the lamfold stack. Reuses the permissive
+# `cpio_reader` parser; see NOTICE and the lamfold design spec §4.
+
+[package]
+name = "lamfold-cpio"
+description = "no_std initramfs/newc cpio frontend for lamfold — a FoldFrontend tree over the permissive cpio_reader"
+readme = "README.md"
+keywords = ["cpio", "initramfs", "no_std", "newc", "uefi"]
+categories = ["filesystem", "no-std"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["std"]
+std = ["lamfold/std"]
+
+[dependencies]
+lamfold = { workspace = true }
+cpio_reader = { workspace = true }

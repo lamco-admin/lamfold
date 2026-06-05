@@ -1,0 +1,19 @@
+lamfold-cpio — third-party attribution
+
+lamfold-cpio is original Lamco Development work (MIT OR Apache-2.0) that REUSES a
+permissive parser rather than clean-rooming a trivial public format:
+
+  cpio_reader  =0.1.2   MIT OR Apache-2.0   no_std
+      Parses cpio records (newc / CRC / portable-ASCII / old-binary). This crate
+      depends on it directly for record parsing, per the SDS "reuse where
+      licensing does not hinder" rule.
+
+The cpio newc/SVR4 format itself is public (the Linux initramfs buffer format,
+kernel Documentation/driver-api/early-userspace/buffer-format.rst). The
+directory-tree construction and the FoldFrontend presentation over the parsed
+records are original Lamco work.
+
+Test fixtures are generated with the `cpio` tool (a tool, not a source); the
+on-disk bytes are data, not code.
+
+M0 license-gate audit: the project license audit

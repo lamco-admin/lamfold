@@ -40,3 +40,9 @@ lzokay = { version = "=2.0.1", default-features = false, features = ["decompress
 
 # --- shepherd (integrity) ---
 sha2 = { version = "0.10", default-features = false }
+
+# --- L3 reused frontend parser (permissive, no_std) ---
+# cpio is a trivial public archive format with a clean MIT/Apache no_std reader;
+# the SDS reuses it directly rather than clean-rooming (reuse where licensing
+# does not hinder). lamfold-cpio builds the tree + FoldFrontend over it.
+cpio_reader = { version = "=0.1.2", default-features = false }
