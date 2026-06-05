@@ -25,7 +25,7 @@ homepage = "https://lamco.ai/products/lamboot/"
 
 [workspace.dependencies]
 # --- the substrate core (internal member; frontends depend on it) ---
-lamfold = { path = "crates/lamfold", default-features = false }
+lamfold = { path = "crates/lamfold", version = "0.0.1", default-features = false }
 
 # --- L2 parse substrate ---
 zerocopy = { version = "=0.8.50", default-features = false, features = ["derive"] }

@@ -8,7 +8,7 @@ name = "lamfold-udf"
 description = "no_std clean-room UDF (ECMA-167 / OSTA 1.02) reader — the lamfold optical-UDF frontend"
 readme = "README.md"
 keywords = ["udf", "filesystem", "no_std", "optical", "uefi"]
-categories = ["filesystem", "no-std"]
+categories = ["filesystem", "no-std", "embedded"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,14 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/lamfold-udf"
+include = [
+    "src/**/*.rs",
+    "README.md",
+    "NOTICE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+]
 
 [features]
 default = ["std"]
@@ -23,3 +31,11 @@ std = ["lamfold/std"]
 
 [dependencies]
 lamfold = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[badges]
+maintenance = { status = "actively-developed" }

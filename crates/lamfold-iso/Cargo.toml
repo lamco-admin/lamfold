@@ -8,7 +8,7 @@ name = "lamfold-iso"
 description = "no_std clean-room ISO9660 (+Rock Ridge/Joliet/El Torito) reader — the lamfold optical frontend"
 readme = "README.md"
 keywords = ["iso9660", "filesystem", "no_std", "uefi", "optical"]
-categories = ["filesystem", "no-std"]
+categories = ["filesystem", "no-std", "embedded"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,14 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/lamfold-iso"
+include = [
+    "src/**/*.rs",
+    "README.md",
+    "NOTICE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+]
 
 [features]
 default = ["std", "zisofs"]
@@ -25,3 +33,11 @@ zisofs = ["lamfold/codec-deflate"]
 
 [dependencies]
 lamfold = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[badges]
+maintenance = { status = "actively-developed" }

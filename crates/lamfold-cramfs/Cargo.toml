@@ -7,7 +7,7 @@ name = "lamfold-cramfs"
 description = "no_std clean-room cramfs reader — the lamfold compressed-ROM legacy frontend (per-page zlib)"
 readme = "README.md"
 keywords = ["cramfs", "filesystem", "no_std", "compression", "uefi"]
-categories = ["filesystem", "no-std"]
+categories = ["filesystem", "no-std", "embedded"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,14 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/lamfold-cramfs"
+include = [
+    "src/**/*.rs",
+    "README.md",
+    "NOTICE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+]
 
 [features]
 # cramfs blocks are always zlib; the codec is non-optional here.
@@ -23,3 +31,11 @@ std = ["lamfold/std"]
 
 [dependencies]
 lamfold = { workspace = true, features = ["codec-deflate"] }
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[badges]
+maintenance = { status = "actively-developed" }

@@ -7,7 +7,7 @@ name = "lamfold"
 description = "no_std read-only media filesystem stack — substrate core (codec registry, immutable-block cache, bounded zero-copy parse, frontend trait, integrity-verification seam)"
 readme = "README.md"
 keywords = ["filesystem", "read-only", "no_std", "iso9660", "squashfs"]
-categories = ["filesystem", "no-std"]
+categories = ["filesystem", "no-std", "embedded"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,14 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/lamfold"
+include = [
+    "src/**/*.rs",
+    "README.md",
+    "NOTICE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+]
 
 [features]
 # `std` is host-test only; the default build is no_std + alloc. Each codec is
@@ -42,3 +50,11 @@ sha2 = { workspace = true, optional = true }
 [dev-dependencies]
 # The lzo round-trip test needs lzokay's encoder; production stays decode-only.
 lzokay = { workspace = true, features = ["compress", "decompress", "alloc"] }
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[badges]
+maintenance = { status = "actively-developed" }

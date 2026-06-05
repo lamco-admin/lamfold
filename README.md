@@ -27,6 +27,22 @@ like the `lamco-wayland` crate within the `lamco-wayland` workspace) and contain
 verification all come from the substrate. Each member publishes as its own crate
 (Debian/crates.io granularity) while versioning and CI'ing together.
 
+## Use
+
+Not yet on crates.io — development is in progress. Until the first release,
+depend on the member you need via this Git repository:
+
+```toml
+# the optical frontend (ISO9660 + Rock Ridge / Joliet / El Torito / zisofs)
+lamfold-iso   = { git = "https://github.com/lamco-admin/lamfold", default-features = false, features = ["zisofs"] }
+# the EROFS frontend + the shepherd (fs-verity integrity)
+lamfold-erofs = { git = "https://github.com/lamco-admin/lamfold", default-features = false, features = ["verity"] }
+# …and lamfold-udf / -squash / -cramfs / -romfs / -cpio, plus the `lamfold` substrate core.
+```
+
+Once published, the same members will be available as crates.io versions
+(`lamfold-iso = "X.Y.Z"`, …) — see each crate's `documentation` link.
+
 ## Build / test (whole workspace)
 
 ```bash

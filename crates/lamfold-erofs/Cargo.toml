@@ -8,7 +8,7 @@ name = "lamfold-erofs"
 description = "no_std clean-room EROFS reader — the lamfold forward-standard frontend, with the fs-verity integrity story"
 readme = "README.md"
 keywords = ["erofs", "filesystem", "no_std", "fs-verity", "composefs"]
-categories = ["filesystem", "no-std"]
+categories = ["filesystem", "no-std", "embedded"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,14 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/lamfold-erofs"
+include = [
+    "src/**/*.rs",
+    "README.md",
+    "NOTICE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+]
 
 [features]
 # Uncompressed EROFS needs no codec; the integrity story (the shepherd) is on by
@@ -26,3 +34,11 @@ verity = ["lamfold/verify"]
 
 [dependencies]
 lamfold = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[badges]
+maintenance = { status = "actively-developed" }

@@ -7,7 +7,7 @@ name = "lamfold-squash"
 description = "no_std clean-room SquashFS reader — the lamfold compressed-read-only frontend (the live-ISO root)"
 readme = "README.md"
 keywords = ["squashfs", "filesystem", "no_std", "compression", "uefi"]
-categories = ["filesystem", "no-std"]
+categories = ["filesystem", "no-std", "embedded"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,14 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/lamfold-squash"
+include = [
+    "src/**/*.rs",
+    "README.md",
+    "NOTICE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+]
 
 [features]
 # Each compressor is opt-in (a SquashFS image uses exactly one); the default is
@@ -29,3 +37,11 @@ lzo = ["lamfold/codec-lzo"]
 
 [dependencies]
 lamfold = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[badges]
+maintenance = { status = "actively-developed" }
