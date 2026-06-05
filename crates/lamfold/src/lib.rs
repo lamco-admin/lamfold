@@ -4,11 +4,13 @@
 //! substrate under thin, clean-room format frontends (the *flock*). This crate
 //! is the substrate (L2) — the shared engine every frontend sits on:
 //!
-//! * [`codec`] — the decompression-codec registry (deflate/lz4 wired; zstd/xz/lzo
-//!   declared), one decoder shared across all compressed formats.
+//! * `codec` — the decompression-codec registry (deflate/lz4 wired; zstd/xz/lzo
+//!   declared), one decoder shared across all compressed formats ([`decode`],
+//!   [`lz4_block_with_dict`]).
 //! * [`BlockCache`] — an immutable decompressed-block LRU (read-only ⇒ no
 //!   invalidation).
-//! * [`read_cap`] — bounded-allocation hardening (no OOM on a hostile size).
+//! * `read_cap` — bounded-allocation hardening (no OOM on a hostile size;
+//!   [`checked_full_read_len`], [`checked_block_len`]).
 //! * [`FoldFrontend`] — the trait the flock implements; [`Verifier`] — the
 //!   shepherd (integrity-verification seam).
 //! * [`BlockSource`] — the byte source a frontend reads over (LamBoot adapts its
@@ -37,7 +39,7 @@ mod verify;
 mod verity;
 
 pub use cache::BlockCache;
-pub use codec::{decode, Codec};
+pub use codec::{decode, lz4_block_with_dict, Codec};
 pub use error::{FoldError, Result};
 pub use frontend::{DirEntry, FileKind, FoldFrontend, Metadata, NodeId, SubstrateCtx};
 pub use path::{metadata_path, read_dir_path, read_path, resolve, MAX_SYMLINKS};

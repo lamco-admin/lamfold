@@ -14,8 +14,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use lamfold::{
-    checked_full_read_len, BlockSource, DirEntry, FileKind, FoldError, FoldFrontend, Metadata,
-    NodeId, Result, SubstrateCtx,
+    checked_full_read_len, lz4_block_with_dict, BlockSource, DirEntry, FileKind, FoldError,
+    FoldFrontend, Metadata, NodeId, Result, SubstrateCtx,
 };
 
 const SUPER_OFFSET: u64 = 1024;
@@ -24,6 +24,22 @@ const MAGIC: u32 = 0xE0F5_E1E2;
 // datalayout (bits 1..=3 of i_format)
 const FLAT_PLAIN: u8 = 0;
 const FLAT_INLINE: u8 = 2;
+const COMPRESSED_FULL: u8 = 1;
+// COMPRESSED_COMPACT (3) is the bit-packed default index — not yet
+// reverse-engineered, so it falls through to the `Unsupported` arm.
+
+// z_erofs compressed-cluster geometry. The 8-byte `z_erofs_map_header` sits at
+// ALIGN(inode_end + xattr, 8); for the FULL (legacy) index the fixed-size
+// `z_erofs_lcluster_index` array begins 16 bytes later (an 8-byte header plus 8
+// reserved bytes — the legacy header size). Each entry's low 2 advise bits give
+// the lcluster type.
+const Z_EROFS_LEGACY_HEADER_SIZE: u64 = 16;
+const LC_TYPE_PLAIN: u16 = 0;
+const LC_TYPE_HEAD1: u16 = 1;
+const LC_TYPE_NONHEAD: u16 = 2;
+const LC_TYPE_HEAD2: u16 = 3;
+// `lz4_max_distance` is ≤ 65535; a 64 KiB window covers every back-reference.
+const LZ4_WINDOW: usize = 65_536;
 
 struct ErofsInode {
     kind: FileKind,
@@ -42,6 +58,10 @@ pub struct Erofs<S: BlockSource> {
     root_nid: u64,
     /// inode cache keyed by nid (parse once).
     inodes: BTreeMap<u64, ErofsInode>,
+    /// fully-decoded data for compressed inodes, keyed by nid. The LZ4 sliding
+    /// dictionary makes forward, whole-file decode the natural unit; cache it so
+    /// repeated block reads (and verification) don't re-decompress.
+    decoded: BTreeMap<u64, Vec<u8>>,
 }
 
 impl<S: BlockSource> Erofs<S> {
@@ -103,22 +123,25 @@ impl<S: BlockSource> Erofs<S> {
     /// (`read_at`) layer verification on top.
     fn read_inode_data(&mut self, nid: u64, off: u64, buf: &mut [u8]) -> Result<usize> {
         let inode = self.inode(nid)?;
-        if off >= inode.size {
+        let layout = inode.layout;
+        let size = inode.size;
+        let raw_blkaddr = inode.raw_blkaddr;
+        let inline_off = inode.inline_off;
+        if off >= size {
             return Ok(0);
         }
-        let end = core::cmp::min(off + buf.len() as u64, inode.size);
+        let end = core::cmp::min(off + buf.len() as u64, size);
         let total = (end - off) as usize;
         let bs = self.block_size;
-        match inode.layout {
+        match layout {
             FLAT_PLAIN => {
-                let base = u64::from(inode.raw_blkaddr) * bs;
+                let base = u64::from(raw_blkaddr) * bs;
                 self.src.read_at(base + off, &mut buf[..total])?;
                 Ok(total)
             }
             FLAT_INLINE => {
-                let full_bytes = (inode.size / bs) * bs;
-                let base = u64::from(inode.raw_blkaddr) * bs;
-                let inline_off = inode.inline_off;
+                let full_bytes = (size / bs) * bs;
+                let base = u64::from(raw_blkaddr) * bs;
                 let mut p = off;
                 while p < end {
                     let (disk, seg_end) = if p < full_bytes {
@@ -133,10 +156,116 @@ impl<S: BlockSource> Erofs<S> {
                 }
                 Ok(total)
             }
+            COMPRESSED_FULL => {
+                self.materialize_compressed(nid)?;
+                let data = self
+                    .decoded
+                    .get(&nid)
+                    .ok_or(FoldError::Corrupt("erofs: decode cache miss"))?;
+                let lo = off as usize;
+                let seg = data
+                    .get(lo..lo + total)
+                    .ok_or(FoldError::Corrupt("erofs: decoded read past end"))?;
+                buf[..total].copy_from_slice(seg);
+                Ok(total)
+            }
             _ => Err(FoldError::Unsupported(
-                "erofs: compressed/chunk datalayout (this build reads uncompressed only)",
+                "erofs: compressed-compact/chunk datalayout (this build reads uncompressed + lz4-full)",
             )),
         }
+    }
+
+    /// Decode a `COMPRESSED_FULL` inode in full and cache it. The pcluster chain
+    /// is a forward LZ4 sliding-dictionary stream, so the whole file is the
+    /// natural decode unit; the cache then backs `read_inode_data`.
+    ///
+    /// Only the LZ4 head algorithm is validated; any other algorithm, or the
+    /// compact (datalayout 3) index, surfaces a clean `Unsupported`/`Corrupt`
+    /// error rather than guessing.
+    fn materialize_compressed(&mut self, nid: u64) -> Result<()> {
+        if self.decoded.contains_key(&nid) {
+            return Ok(());
+        }
+        let inode = self.inode(nid)?;
+        let i_size = inode.size;
+        let inline_off = inode.inline_off;
+        let bs = self.block_size;
+
+        // z_erofs_map_header at ALIGN(inode_end + xattr, 8); the FULL index
+        // follows the 16-byte legacy header region.
+        let mh = (inline_off + 7) & !7;
+        let mut hdr = [0u8; 8];
+        self.src.read_at(mh, &mut hdr)?;
+        let head1_algo = hdr[6] & 0x0f;
+        let head2_algo = (hdr[6] >> 4) & 0x0f;
+        let lcsize = 1u64 << (u32::from(hdr[7] & 7) + 12);
+        let idx0 = mh + Z_EROFS_LEGACY_HEADER_SIZE;
+        let n_lc = i_size.div_ceil(lcsize);
+
+        // Each PLAIN/HEAD lcluster opens a pcluster; collect (logical_start,
+        // type, blkaddr). The first pcluster always starts at offset 0.
+        let mut heads: Vec<(u64, u16, u32)> = Vec::new();
+        for i in 0..n_lc {
+            let mut e = [0u8; 8];
+            self.src.read_at(idx0 + i * 8, &mut e)?;
+            let ty = u16::from_le_bytes([e[0], e[1]]) & 3;
+            if ty == LC_TYPE_NONHEAD {
+                continue;
+            }
+            let clusterofs = u64::from(u16::from_le_bytes([e[2], e[3]]));
+            let blkaddr = u32::from_le_bytes([e[4], e[5], e[6], e[7]]);
+            let start = if heads.is_empty() {
+                0
+            } else {
+                i * lcsize + clusterofs
+            };
+            heads.push((start, ty, blkaddr));
+        }
+
+        let cap = checked_full_read_len(i_size)?;
+        let mut out: Vec<u8> = Vec::with_capacity(cap);
+        let mut block = vec![0u8; bs as usize];
+        for k in 0..heads.len() {
+            let (start, ty, blkaddr) = heads[k];
+            let next = heads.get(k + 1).map_or(i_size, |h| h.0);
+            if next < start {
+                return Err(FoldError::Corrupt("erofs: non-monotonic pcluster starts"));
+            }
+            let outlen = (next - start) as usize;
+            let phys = u64::from(blkaddr) * bs;
+            let avail = core::cmp::min(bs, self.src.len().saturating_sub(phys)) as usize;
+            if avail == 0 {
+                return Err(FoldError::Corrupt("erofs: pcluster block out of range"));
+            }
+            self.src.read_at(phys, &mut block[..avail])?;
+            let input = &block[..avail];
+            match ty {
+                LC_TYPE_PLAIN => {
+                    let raw = input.get(..outlen).ok_or(FoldError::Corrupt(
+                        "erofs: plain pcluster shorter than block",
+                    ))?;
+                    out.extend_from_slice(raw);
+                }
+                LC_TYPE_HEAD1 | LC_TYPE_HEAD2 => {
+                    let algo = if ty == LC_TYPE_HEAD1 {
+                        head1_algo
+                    } else {
+                        head2_algo
+                    };
+                    if algo != 0 {
+                        return Err(FoldError::Unsupported(
+                            "erofs: compressed head algorithm (only lz4 is validated)",
+                        ));
+                    }
+                    let win = &out[out.len().saturating_sub(LZ4_WINDOW)..];
+                    let seg = lz4_block_with_dict(input, outlen, win)?;
+                    out.extend_from_slice(&seg);
+                }
+                _ => unreachable!("non-head lcluster types are filtered above"),
+            }
+        }
+        self.decoded.insert(nid, out);
+        Ok(())
     }
 
     /// Parse the dirents in one directory data block.
@@ -208,6 +337,7 @@ impl<S: BlockSource> FoldFrontend<S> for Erofs<S> {
             meta_off,
             root_nid,
             inodes: BTreeMap::new(),
+            decoded: BTreeMap::new(),
         };
         me.parse_inode(root_nid)?;
         Ok(me)

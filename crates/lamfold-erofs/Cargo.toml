@@ -27,10 +27,12 @@ include = [
 
 [features]
 # Uncompressed EROFS needs no codec; the integrity story (the shepherd) is on by
-# default. Compressed clusters (lz4/lzma/zstd/deflate) are a later stage.
-default = ["std", "verity"]
+# default. `lz4` adds the validated COMPRESSED_FULL + LZ4 read path; lzma/zstd/
+# deflate heads and the compact (datalayout 3) index are a later stage.
+default = ["std", "verity", "lz4"]
 std = ["lamfold/std"]
 verity = ["lamfold/verify"]
+lz4 = ["lamfold/codec-lz4"]
 
 [dependencies]
 lamfold = { workspace = true }

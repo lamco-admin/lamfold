@@ -53,6 +53,31 @@ pub fn decode(codec: Codec, input: &[u8], expected_len: usize) -> Result<Vec<u8>
     }
 }
 
+/// LZ4 **block** decode with an external dictionary — the prior decompressed
+/// output that EROFS reaches into through its sliding window (`lz4_max_distance`,
+/// ≤ 64 KiB). Unlike [`decode`], the dictionary is the bytes logically preceding
+/// this pcluster's output, and the produced length is the pcluster's exact
+/// decompressed size (`expected_len`). Used by `lamfold-erofs`'s compressed path.
+#[cfg(feature = "codec-lz4")]
+pub fn lz4_block_with_dict(input: &[u8], expected_len: usize, dict: &[u8]) -> Result<Vec<u8>> {
+    // Same bomb guard as `decode`: bound the declared output before allocating.
+    let _ = checked_block_len(expected_len as u64)?;
+    let mut out = alloc::vec![0u8; expected_len];
+    let n = lz4_flex::block::decompress_into_with_dict(input, &mut out, dict)
+        .map_err(|_| FoldError::Decompress("erofs lz4 dict decompress failed"))?;
+    if n != expected_len {
+        return Err(FoldError::Decompress(
+            "erofs lz4 dict decompress: short output",
+        ));
+    }
+    Ok(out)
+}
+
+#[cfg(not(feature = "codec-lz4"))]
+pub fn lz4_block_with_dict(_: &[u8], _: usize, _: &[u8]) -> Result<Vec<u8>> {
+    Err(FoldError::Unsupported("codec-lz4 feature disabled"))
+}
+
 #[cfg(feature = "codec-deflate")]
 fn inflate_zlib(input: &[u8], expected_len: usize) -> Result<Vec<u8>> {
     miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(input, expected_len)
