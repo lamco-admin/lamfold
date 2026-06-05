@@ -27,7 +27,7 @@ Verified: builds with default features **and** `--no-default-features` (genuine
 ## Codecs (all permissive `no_std`, opt-in per cargo feature)
 
 `miniz_oxide` (deflate/zlib), `lz4_flex` (lz4 block), `ruzstd` (zstd), `lzma-rust2`
-(xz/lzma), `lzokay` (lzo). Parse: `zerocopy` + `heapless`. See `the lamfold design spec` §6
+(xz/lzma), `lzokay` (lzo). Parse: `zerocopy`. See `the lamfold design spec` §6
 for the pinned set — zero copyleft anywhere in the tree.
 
 ## Build

@@ -39,7 +39,6 @@ verify = ["dep:sha2"]
 
 [dependencies]
 zerocopy.workspace = true
-heapless.workspace = true
 miniz_oxide = { workspace = true, optional = true }
 lz4_flex = { workspace = true, optional = true }
 ruzstd = { workspace = true, optional = true }
