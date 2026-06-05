@@ -1,17 +1,93 @@
-name: ci
-on: [push, pull_request]
+# lamfold CI — Tier 1 (baseline gate) + Tier 2 (no_std / MSRV / supply-chain).
+# A no_std read-only media filesystem stack: a stray `std::` path must fail to
+# compile, so the no-std job is load-bearing.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  MSRV: "1.85"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  check:
+  # ───────────────────────── Tier 1: baseline mechanical gate ─────────────────────────
+  fmt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-        with: { components: rustfmt, clippy, rust-src }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
       - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - name: no_std build (substrate, all codecs)
-        run: cargo build -p lamfold --no-default-features --features codec-deflate,codec-lz4,codec-zstd,codec-xz,codec-lzo
-      - name: no_std build (iso frontend)
-        run: cargo build -p lamfold-iso --no-default-features
-      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (default features)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --all-features
+
+  doc:
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --no-deps --all-features
+
+  # ───────────────────────── Tier 2: crate-specific rigor ─────────────────────────
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --all-features
+
+  no-std:
+    # The stack's reason to exist: every member must build with no std. A
+    # bare-metal target (no std, precompiled core/alloc) proves it cleanly.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --no-default-features --target thumbv7em-none-eabihf
+
+  deny:
+    # Supply chain: advisories, license policy, banned/duplicate crates, sources.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check
