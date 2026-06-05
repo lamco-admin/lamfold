@@ -18,7 +18,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [features]
-default = ["std"]
+default = ["std", "zisofs"]
 std = ["lamfold/std"]
 # zisofs (transparent per-file Deflate) — pulls the substrate's deflate codec.
 zisofs = ["lamfold/codec-deflate"]

@@ -12,6 +12,15 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// zisofs (transparent paged-zlib compression) parameters from the `ZF` entry.
+#[derive(Clone, Copy)]
+pub struct Zisofs {
+    /// The file's real (decompressed) length.
+    pub uncompressed_size: u32,
+    /// log2 of the compression block size (e.g. 15 ⇒ 32 KiB blocks).
+    pub block_size_log2: u8,
+}
+
 /// What Rock Ridge adds to a directory entry. All optional — absent fields mean
 /// "fall back to the base ISO9660 value".
 #[derive(Default)]
@@ -22,6 +31,8 @@ pub struct RrInfo {
     pub mode: Option<u32>,
     /// Symlink target from `SL` (presence ⇒ the entry is a symlink).
     pub symlink_target: Option<Vec<u8>>,
+    /// zisofs compression parameters from `ZF` (presence ⇒ the file is zisofs).
+    pub zisofs: Option<Zisofs>,
 }
 
 /// Detect the SUSP `SP` indicator (only in the root directory's "." record) and
@@ -75,6 +86,15 @@ pub fn parse_su(su: &[u8]) -> RrInfo {
                 have_sl = true;
                 if !data.is_empty() {
                     parse_sl_components(&data[1..], &mut sl);
+                }
+            }
+            b"ZF" => {
+                // [algo(2)="pz", header_size/4, block_size_log2, uncompressed_size(4 LE)]
+                if data.len() >= 8 && &data[0..2] == b"pz" {
+                    info.zisofs = Some(Zisofs {
+                        block_size_log2: data[3],
+                        uncompressed_size: u32::from_le_bytes([data[4], data[5], data[6], data[7]]),
+                    });
                 }
             }
             b"ST" => break,

@@ -29,12 +29,20 @@ const VD_REGION_OFFSET: u64 = 16 * 2048;
 const VD_SIZE: usize = 2048;
 const VD_TYPE_BOOT_RECORD: u8 = 0;
 const VD_TYPE_PRIMARY: u8 = 1;
+const VD_TYPE_SUPPLEMENTARY: u8 = 2;
 const VD_TYPE_TERMINATOR: u8 = 255;
 const STANDARD_ID: &[u8; 5] = b"CD001";
+/// Joliet escape sequences (at SVD offset 88): "%/@" (UCS-2 L1), "%/C" (L2),
+/// "%/E" (L3). The third byte distinguishes the level; all three are Joliet.
+const JOLIET_ESCAPE_PREFIX: [u8; 2] = [0x25, 0x2F]; // "%/"
+const JOLIET_ESCAPE_OFFSET: usize = 88;
 /// Boot System Identifier marking an El Torito boot-record volume descriptor.
 const EL_TORITO_ID: &[u8] = b"EL TORITO SPECIFICATION";
 /// Absolute pointer to the El Torito boot catalog (LE u32) in the boot-record VD.
 const ET_CATALOG_PTR_OFFSET: usize = 71;
+/// zisofs file-data header magic (8 bytes).
+#[cfg(feature = "zisofs")]
+const ZISOFS_MAGIC: [u8; 8] = [0x37, 0xE4, 0x53, 0x96, 0xC9, 0xDB, 0xD6, 0x07];
 /// Bound on the descriptor scan — a real volume has a handful, never this many.
 const MAX_VD_SCAN: u64 = 64;
 
@@ -55,6 +63,10 @@ struct Inode {
     kind: FileKind,
     /// Symlink target bytes (Rock Ridge `SL`), `None` for non-symlinks.
     link_target: Option<Vec<u8>>,
+    /// zisofs parameters (Rock Ridge `ZF`), `None` for uncompressed files. When
+    /// set, `size` is the *compressed* extent size and `zisofs.uncompressed_size`
+    /// is the logical file size.
+    zisofs: Option<rock_ridge::Zisofs>,
 }
 
 /// A mounted ISO9660 volume.
@@ -69,6 +81,9 @@ pub struct Iso9660<S: BlockSource> {
     rock_ridge: bool,
     /// SUSP skip length (bytes to ignore at the start of each System Use area).
     susp_skip: usize,
+    /// This volume's chosen name tree is the Joliet SVD ⇒ decode file identifiers
+    /// as UCS-2 (UTF-16BE). Mutually exclusive with `rock_ridge`.
+    joliet: bool,
     /// El Torito boot catalog LBA, captured from the boot-record VD (if any).
     el_torito_catalog_lba: Option<u32>,
 }
@@ -157,13 +172,18 @@ impl<S: BlockSource> Iso9660<S> {
                 let lba = le_u32(rec, dr::EXTENT_LBA_LE)?;
                 let size = le_u32(rec, dr::DATA_LEN_LE)?;
 
-                let mut name = decode_name(fi, is_dir)?;
+                let mut name = if self.joliet {
+                    decode_name_joliet(fi, is_dir)?
+                } else {
+                    decode_name(fi, is_dir)?
+                };
                 let mut kind = if is_dir {
                     FileKind::Directory
                 } else {
                     FileKind::Regular
                 };
                 let mut link_target = None;
+                let mut zisofs = None;
 
                 if self.rock_ridge {
                     // System Use area: after the file id (+ a pad byte when LEN_FI
@@ -180,6 +200,7 @@ impl<S: BlockSource> Iso9660<S> {
                             kind = FileKind::Symlink;
                             link_target = Some(target);
                         }
+                        zisofs = rr.zisofs;
                     }
                 }
                 f(
@@ -189,6 +210,7 @@ impl<S: BlockSource> Iso9660<S> {
                         size,
                         kind,
                         link_target,
+                        zisofs,
                     },
                 );
             }
@@ -214,6 +236,74 @@ impl<S: BlockSource> Iso9660<S> {
         self.src.read_at(off, &mut cat)?;
         Ok(el_torito::parse_catalog(&cat))
     }
+
+    /// Read a zisofs (paged-zlib) compressed file: the data extent begins with a
+    /// 16-byte header + a block-pointer table; each block is zlib-compressed (a
+    /// zero-length pointer span is a hole). Decompression goes through the shared
+    /// substrate codec.
+    #[cfg(feature = "zisofs")]
+    fn read_zisofs(
+        &mut self,
+        inode: &Inode,
+        zi: rock_ridge::Zisofs,
+        off: u64,
+        buf: &mut [u8],
+    ) -> Result<usize> {
+        use lamfold::{decode, Codec};
+
+        let uncompressed = u64::from(zi.uncompressed_size);
+        if off >= uncompressed {
+            return Ok(0);
+        }
+        if zi.block_size_log2 >= 31 {
+            return Err(FoldError::Corrupt("zisofs: implausible block size"));
+        }
+        let block_size = 1u64 << zi.block_size_log2;
+        let n_blocks = uncompressed.div_ceil(block_size) as usize;
+        let table_bytes = (n_blocks + 1)
+            .checked_mul(4)
+            .ok_or(FoldError::Corrupt("zisofs: block table overflow"))?;
+        let head_len = checked_full_read_len(16u64 + table_bytes as u64)?;
+        let extent_off = u64::from(inode.lba) * u64::from(self.block_size);
+        let mut head = vec![0u8; head_len];
+        self.src.read_at(extent_off, &mut head)?;
+        if head[..8] != ZISOFS_MAGIC {
+            return Err(FoldError::Corrupt("zisofs: bad magic"));
+        }
+        let ptr = |i: usize| -> u32 {
+            let o = 16 + i * 4;
+            u32::from_le_bytes([head[o], head[o + 1], head[o + 2], head[o + 3]])
+        };
+
+        let want = core::cmp::min(buf.len() as u64, uncompressed - off) as usize;
+        let mut produced = 0;
+        let mut cur = off;
+        while produced < want {
+            let blk = (cur / block_size) as usize;
+            let blk_base = blk as u64 * block_size;
+            let this_uncomp = core::cmp::min(block_size, uncompressed - blk_base) as usize;
+            let cstart = u64::from(ptr(blk));
+            let cend = u64::from(ptr(blk + 1));
+            let decompressed: Vec<u8> = if cend <= cstart {
+                vec![0u8; this_uncomp] // a hole
+            } else {
+                let clen = checked_full_read_len(cend - cstart)?;
+                let mut cbuf = vec![0u8; clen];
+                self.src.read_at(extent_off + cstart, &mut cbuf)?;
+                decode(Codec::Zlib, &cbuf, this_uncomp)?
+            };
+            let in_blk = (cur - blk_base) as usize;
+            let avail = decompressed.len().saturating_sub(in_blk);
+            let take = core::cmp::min(avail, want - produced);
+            if take == 0 {
+                break;
+            }
+            buf[produced..produced + take].copy_from_slice(&decompressed[in_blk..in_blk + take]);
+            produced += take;
+            cur += take as u64;
+        }
+        Ok(produced)
+    }
 }
 
 impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
@@ -237,10 +327,12 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
             by_lba: BTreeMap::new(),
             rock_ridge: false,
             susp_skip: 0,
+            joliet: false,
             el_torito_catalog_lba: None,
         };
         let mut vd = [0u8; VD_SIZE];
-        let mut root: Option<Inode> = None;
+        let mut pvd_root: Option<Inode> = None;
+        let mut joliet_root: Option<Inode> = None;
         for i in 0..MAX_VD_SCAN {
             let off = VD_REGION_OFFSET + i * VD_SIZE as u64;
             if off + VD_SIZE as u64 > me.src.len() {
@@ -257,33 +349,40 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
                     if me.block_size == 0 {
                         return Err(FoldError::Corrupt("iso: zero logical block size"));
                     }
-                    // Root directory record: 34 bytes at offset 156.
-                    let rdr = &vd[156..156 + 34];
-                    root = Some(Inode {
-                        lba: le_u32(rdr, dr::EXTENT_LBA_LE)?,
-                        size: le_u32(rdr, dr::DATA_LEN_LE)?,
-                        kind: FileKind::Directory,
-                        link_target: None,
-                    });
-                    // Don't break — the boot-record VD (El Torito) usually
-                    // follows the PVD; scan on to the terminator.
+                    pvd_root = Some(root_record(&vd)?);
+                    // Don't break — boot-record / supplementary descriptors follow.
                 }
                 VD_TYPE_BOOT_RECORD => {
                     if vd.get(7..7 + EL_TORITO_ID.len()) == Some(EL_TORITO_ID) {
                         me.el_torito_catalog_lba = Some(le_u32(&vd, ET_CATALOG_PTR_OFFSET)?);
                     }
                 }
+                VD_TYPE_SUPPLEMENTARY => {
+                    // A Supplementary VD with a Joliet escape sequence carries the
+                    // UCS-2 name tree.
+                    let esc = &vd[JOLIET_ESCAPE_OFFSET..JOLIET_ESCAPE_OFFSET + 3];
+                    if esc[..2] == JOLIET_ESCAPE_PREFIX && matches!(esc[2], 0x40 | 0x43 | 0x45) {
+                        joliet_root = Some(root_record(&vd)?);
+                    }
+                }
                 VD_TYPE_TERMINATOR => break,
-                _ => continue, // supplementary (Joliet — S2), etc.
+                _ => continue,
             }
         }
-        let root = root.ok_or(FoldError::Corrupt("iso: no primary volume descriptor"))?;
-        // Detect SUSP/Rock Ridge: the root directory's "." record carries the
-        // `SP` indicator + the per-record skip length.
-        if let Some(skip) = me.detect_susp(&root)? {
+        let pvd_root = pvd_root.ok_or(FoldError::Corrupt("iso: no primary volume descriptor"))?;
+
+        // Name-tree preference: Rock Ridge (full POSIX) > Joliet (UCS-2) > base.
+        // Rock Ridge lives on the PVD tree; detect it via the root "." SP entry.
+        let root = if let Some(skip) = me.detect_susp(&pvd_root)? {
             me.rock_ridge = true;
             me.susp_skip = skip;
-        }
+            pvd_root
+        } else if let Some(jr) = joliet_root {
+            me.joliet = true;
+            jr
+        } else {
+            pvd_root
+        };
         me.intern(root); // node 0 = root
         Ok(me)
     }
@@ -329,9 +428,14 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
 
     fn metadata(&mut self, node: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Metadata> {
         let inode = self.inode(node)?;
+        // A zisofs file's logical size is its *uncompressed* length, not the
+        // compressed extent recorded in the directory record.
+        let size = inode
+            .zisofs
+            .map_or(u64::from(inode.size), |z| u64::from(z.uncompressed_size));
         Ok(Metadata {
             kind: inode.kind,
-            size: u64::from(inode.size),
+            size,
             mode: 0,
         })
     }
@@ -347,6 +451,16 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
         if inode.kind == FileKind::Directory {
             return Err(FoldError::IsDirectory);
         }
+        #[cfg(feature = "zisofs")]
+        if let Some(zi) = inode.zisofs {
+            return self.read_zisofs(&inode, zi, off, buf);
+        }
+        #[cfg(not(feature = "zisofs"))]
+        if inode.zisofs.is_some() {
+            return Err(FoldError::Unsupported(
+                "zisofs-compressed file: enable the `zisofs` feature",
+            ));
+        }
         let size = u64::from(inode.size);
         if off >= size {
             return Ok(0);
@@ -361,6 +475,38 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
 
     fn read_link(&mut self, node: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Option<Vec<u8>>> {
         Ok(self.inode(node)?.link_target)
+    }
+}
+
+/// Extract the root directory record (offset 156, 34 bytes) of a volume
+/// descriptor (PVD or Joliet SVD) as an [`Inode`].
+fn root_record(vd: &[u8]) -> Result<Inode> {
+    let rdr = vd
+        .get(156..156 + 34)
+        .ok_or(FoldError::Corrupt("iso: short root directory record"))?;
+    Ok(Inode {
+        lba: le_u32(rdr, dr::EXTENT_LBA_LE)?,
+        size: le_u32(rdr, dr::DATA_LEN_LE)?,
+        kind: FileKind::Directory,
+        link_target: None,
+        zisofs: None,
+    })
+}
+
+/// Decode a Joliet (UCS-2 / UTF-16BE) file identifier, stripping the `;version`
+/// suffix from file names.
+fn decode_name_joliet(fi: &[u8], is_dir: bool) -> Result<String> {
+    let units = fi.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]]));
+    let mut s = String::new();
+    for ch in char::decode_utf16(units) {
+        s.push(ch.map_err(|_| FoldError::InvalidPath("iso: bad UTF-16 in joliet name"))?);
+    }
+    if is_dir {
+        Ok(s)
+    } else {
+        let base = s.split(';').next().unwrap_or(&s);
+        let base = base.strip_suffix('.').unwrap_or(base);
+        Ok(String::from(base))
     }
 }
 
