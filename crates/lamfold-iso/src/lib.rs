@@ -16,7 +16,9 @@
 
 extern crate alloc;
 
+mod el_torito;
 mod iso9660;
 mod rock_ridge;
 
+pub use el_torito::UefiImage;
 pub use iso9660::Iso9660;

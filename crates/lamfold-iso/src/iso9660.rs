@@ -20,16 +20,21 @@ use lamfold::{
     NodeId, Result, SubstrateCtx,
 };
 
-use crate::rock_ridge;
+use crate::{el_torito, rock_ridge};
 
 /// The system area is a fixed 32 768 bytes (16 logical sectors of 2048), so the
 /// Volume Descriptor Set always begins at sector 16 regardless of the volume's
 /// own logical block size.
 const VD_REGION_OFFSET: u64 = 16 * 2048;
 const VD_SIZE: usize = 2048;
+const VD_TYPE_BOOT_RECORD: u8 = 0;
 const VD_TYPE_PRIMARY: u8 = 1;
 const VD_TYPE_TERMINATOR: u8 = 255;
 const STANDARD_ID: &[u8; 5] = b"CD001";
+/// Boot System Identifier marking an El Torito boot-record volume descriptor.
+const EL_TORITO_ID: &[u8] = b"EL TORITO SPECIFICATION";
+/// Absolute pointer to the El Torito boot catalog (LE u32) in the boot-record VD.
+const ET_CATALOG_PTR_OFFSET: usize = 71;
 /// Bound on the descriptor scan — a real volume has a handful, never this many.
 const MAX_VD_SCAN: u64 = 64;
 
@@ -64,6 +69,8 @@ pub struct Iso9660<S: BlockSource> {
     rock_ridge: bool,
     /// SUSP skip length (bytes to ignore at the start of each System Use area).
     susp_skip: usize,
+    /// El Torito boot catalog LBA, captured from the boot-record VD (if any).
+    el_torito_catalog_lba: Option<u32>,
 }
 
 impl<S: BlockSource> Iso9660<S> {
@@ -189,6 +196,24 @@ impl<S: BlockSource> Iso9660<S> {
         }
         Ok(())
     }
+
+    /// The El Torito **UEFI** boot image as a byte-range on this source, or
+    /// `None` if the volume has no UEFI boot entry. A side-channel *outside* the
+    /// filesystem surface (it has no directory/inode analogue): boot-from-ISO
+    /// uses it to locate the embedded UEFI loader. The byte range is
+    /// `image.lba * 2048 .. + image.sectors * 512`.
+    pub fn el_torito_uefi_image(&mut self) -> Result<Option<el_torito::UefiImage>> {
+        let Some(cat_lba) = self.el_torito_catalog_lba else {
+            return Ok(None);
+        };
+        let off = u64::from(cat_lba) * u64::from(self.block_size);
+        if off + VD_SIZE as u64 > self.src.len() {
+            return Ok(None);
+        }
+        let mut cat = vec![0u8; VD_SIZE];
+        self.src.read_at(off, &mut cat)?;
+        Ok(el_torito::parse_catalog(&cat))
+    }
 }
 
 impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
@@ -212,6 +237,7 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
             by_lba: BTreeMap::new(),
             rock_ridge: false,
             susp_skip: 0,
+            el_torito_catalog_lba: None,
         };
         let mut vd = [0u8; VD_SIZE];
         let mut root: Option<Inode> = None;
@@ -239,10 +265,16 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
                         kind: FileKind::Directory,
                         link_target: None,
                     });
-                    break;
+                    // Don't break — the boot-record VD (El Torito) usually
+                    // follows the PVD; scan on to the terminator.
+                }
+                VD_TYPE_BOOT_RECORD => {
+                    if vd.get(7..7 + EL_TORITO_ID.len()) == Some(EL_TORITO_ID) {
+                        me.el_torito_catalog_lba = Some(le_u32(&vd, ET_CATALOG_PTR_OFFSET)?);
+                    }
                 }
                 VD_TYPE_TERMINATOR => break,
-                _ => continue, // boot record, supplementary (Joliet — S1-cont), etc.
+                _ => continue, // supplementary (Joliet — S2), etc.
             }
         }
         let root = root.ok_or(FoldError::Corrupt("iso: no primary volume descriptor"))?;
