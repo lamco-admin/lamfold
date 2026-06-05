@@ -130,7 +130,7 @@ impl<S: BlockSource> Iso9660<S> {
         let fi_len = *rec
             .get(dr::LEN_FI)
             .ok_or(FoldError::Corrupt("iso: short root record"))? as usize;
-        let pad = usize::from(fi_len % 2 == 0);
+        let pad = usize::from(fi_len.is_multiple_of(2));
         let su_start = dr::FILE_ID + fi_len + pad;
         let su = rec.get(su_start..).unwrap_or(&[]);
         Ok(rock_ridge::detect_sp(su))
@@ -188,7 +188,7 @@ impl<S: BlockSource> Iso9660<S> {
                 if self.rock_ridge {
                     // System Use area: after the file id (+ a pad byte when LEN_FI
                     // is even), minus the SUSP skip length.
-                    let pad = usize::from(fi_len % 2 == 0);
+                    let pad = usize::from(fi_len.is_multiple_of(2));
                     let su_start = dr::FILE_ID + fi_len + pad;
                     if let Some(su) = rec.get(su_start..) {
                         let su = su.get(self.susp_skip..).unwrap_or(&[]);

@@ -14,7 +14,12 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.85"
+# The honest floor of the current dependency set (ruzstd 0.8.3 needs 1.87; every
+# other pin is lower). Not an artificial hold: the Debian path builds on the
+# archive's *current* stable rustc (~1.96 — both the from-source `-Zbuild-std`
+# binary build and a debcargo upload land in unstable/sid), so there is no
+# old-stable MSRV constraint to satisfy. Bump freely as the dep floor moves.
+rust-version = "1.87"
 license = "MIT OR Apache-2.0"
 authors = [
     "Greg Lamberson <greg@lamco.io>",
@@ -33,14 +38,7 @@ zerocopy = { version = "=0.8.50", default-features = false, features = ["derive"
 # --- L2 codec registry (all permissive no_std; members add `optional = true`) ---
 miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
 lz4_flex = { version = "=0.13.1", default-features = false, features = ["safe-decode", "safe-encode"] }
-# Pinned to 0.8.1 — the newest ruzstd that compiles on rustc 1.85 (Debian 13
-# trixie) while still exposing the `encoding` module the zstd round-trip test
-# uses. 0.8.2/0.8.3 call `u*::is_multiple_of` (stabilized 1.87) and 0.8.3 also
-# declares MSRV 1.87, either of which would lift lamfold's floor above 1.85 and
-# break the debcargo archive path; 0.7.x predates the `encoding` module. The
-# declared MSRV is not load-bearing here — verified by an actual `cargo +1.85.1`
-# build.
-ruzstd = { version = "=0.8.1", default-features = false }
+ruzstd = { version = "=0.8.3", default-features = false }
 lzma-rust2 = { version = "=0.16.4", default-features = false, features = ["xz"] }
 lzokay = { version = "=2.0.1", default-features = false, features = ["decompress", "alloc"] }
 

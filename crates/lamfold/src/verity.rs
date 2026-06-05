@@ -160,7 +160,7 @@ impl MerkleVerifier {
 
 impl Verifier for MerkleVerifier {
     fn verify_block(&self, _node: NodeId, offset: u64, data: &[u8]) -> Result<()> {
-        if offset % self.block_size as u64 != 0 {
+        if !offset.is_multiple_of(self.block_size as u64) {
             return Err(FoldError::VerifyFailed("unaligned verify offset"));
         }
         let idx = (offset / self.block_size as u64) as usize;
