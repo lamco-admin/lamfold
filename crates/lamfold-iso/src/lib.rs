@@ -17,5 +17,6 @@
 extern crate alloc;
 
 mod iso9660;
+mod rock_ridge;
 
 pub use iso9660::Iso9660;

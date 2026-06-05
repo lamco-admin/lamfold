@@ -20,6 +20,8 @@ use lamfold::{
     NodeId, Result, SubstrateCtx,
 };
 
+use crate::rock_ridge;
+
 /// The system area is a fixed 32 768 bytes (16 logical sectors of 2048), so the
 /// Volume Descriptor Set always begins at sector 16 regardless of the volume's
 /// own logical block size.
@@ -41,11 +43,13 @@ mod dr {
     pub const FLAG_DIRECTORY: u8 = 0x02;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Inode {
     lba: u32,
     size: u32,
-    is_dir: bool,
+    kind: FileKind,
+    /// Symlink target bytes (Rock Ridge `SL`), `None` for non-symlinks.
+    link_target: Option<Vec<u8>>,
 }
 
 /// A mounted ISO9660 volume.
@@ -56,6 +60,10 @@ pub struct Iso9660<S: BlockSource> {
     /// Intern table: extent LBA → node index, so repeated walks don't grow the
     /// node list without bound.
     by_lba: BTreeMap<u32, NodeId>,
+    /// Rock Ridge present on this volume (SUSP `SP` found in the root).
+    rock_ridge: bool,
+    /// SUSP skip length (bytes to ignore at the start of each System Use area).
+    susp_skip: usize,
 }
 
 impl<S: BlockSource> Iso9660<S> {
@@ -63,16 +71,17 @@ impl<S: BlockSource> Iso9660<S> {
         if let Some(&id) = self.by_lba.get(&inode.lba) {
             return id;
         }
+        let lba = inode.lba;
         let id = self.nodes.len() as NodeId;
         self.nodes.push(inode);
-        self.by_lba.insert(inode.lba, id);
+        self.by_lba.insert(lba, id);
         id
     }
 
     fn inode(&self, node: NodeId) -> Result<Inode> {
         self.nodes
             .get(node as usize)
-            .copied()
+            .cloned()
             .ok_or(FoldError::NotFound)
     }
 
@@ -83,6 +92,26 @@ impl<S: BlockSource> Iso9660<S> {
         let off = u64::from(inode.lba) * u64::from(self.block_size);
         self.src.read_at(off, &mut buf)?;
         Ok(buf)
+    }
+
+    /// Read the root directory's "." record and detect the SUSP `SP` indicator,
+    /// returning the per-record skip length if Rock Ridge is present.
+    fn detect_susp(&mut self, root: &Inode) -> Result<Option<usize>> {
+        let buf = self.read_dir_extent(root.clone())?;
+        if buf.is_empty() {
+            return Ok(None);
+        }
+        let len = buf[0] as usize;
+        let rec = buf
+            .get(..len)
+            .ok_or(FoldError::Corrupt("iso: short root record"))?;
+        let fi_len = *rec
+            .get(dr::LEN_FI)
+            .ok_or(FoldError::Corrupt("iso: short root record"))? as usize;
+        let pad = usize::from(fi_len % 2 == 0);
+        let su_start = dr::FILE_ID + fi_len + pad;
+        let su = rec.get(su_start..).unwrap_or(&[]);
+        Ok(rock_ridge::detect_sp(su))
     }
 
     /// Iterate the records in a directory extent, invoking `f` for each non-dot
@@ -120,8 +149,41 @@ impl<S: BlockSource> Iso9660<S> {
                 let is_dir = flags & dr::FLAG_DIRECTORY != 0;
                 let lba = le_u32(rec, dr::EXTENT_LBA_LE)?;
                 let size = le_u32(rec, dr::DATA_LEN_LE)?;
-                let name = decode_name(fi, is_dir)?;
-                f(name, Inode { lba, size, is_dir });
+
+                let mut name = decode_name(fi, is_dir)?;
+                let mut kind = if is_dir {
+                    FileKind::Directory
+                } else {
+                    FileKind::Regular
+                };
+                let mut link_target = None;
+
+                if self.rock_ridge {
+                    // System Use area: after the file id (+ a pad byte when LEN_FI
+                    // is even), minus the SUSP skip length.
+                    let pad = usize::from(fi_len % 2 == 0);
+                    let su_start = dr::FILE_ID + fi_len + pad;
+                    if let Some(su) = rec.get(su_start..) {
+                        let su = su.get(self.susp_skip..).unwrap_or(&[]);
+                        let rr = rock_ridge::parse_su(su);
+                        if let Some(n) = rr.name {
+                            name = n;
+                        }
+                        if let Some(target) = rr.symlink_target {
+                            kind = FileKind::Symlink;
+                            link_target = Some(target);
+                        }
+                    }
+                }
+                f(
+                    name,
+                    Inode {
+                        lba,
+                        size,
+                        kind,
+                        link_target,
+                    },
+                );
             }
             pos += len;
         }
@@ -148,6 +210,8 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
             block_size: 2048,
             nodes: Vec::new(),
             by_lba: BTreeMap::new(),
+            rock_ridge: false,
+            susp_skip: 0,
         };
         let mut vd = [0u8; VD_SIZE];
         let mut root: Option<Inode> = None;
@@ -172,7 +236,8 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
                     root = Some(Inode {
                         lba: le_u32(rdr, dr::EXTENT_LBA_LE)?,
                         size: le_u32(rdr, dr::DATA_LEN_LE)?,
-                        is_dir: true,
+                        kind: FileKind::Directory,
+                        link_target: None,
                     });
                     break;
                 }
@@ -181,6 +246,12 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
             }
         }
         let root = root.ok_or(FoldError::Corrupt("iso: no primary volume descriptor"))?;
+        // Detect SUSP/Rock Ridge: the root directory's "." record carries the
+        // `SP` indicator + the per-record skip length.
+        if let Some(skip) = me.detect_susp(&root)? {
+            me.rock_ridge = true;
+            me.susp_skip = skip;
+        }
         me.intern(root); // node 0 = root
         Ok(me)
     }
@@ -196,7 +267,7 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
         _cx: &mut SubstrateCtx<'_>,
     ) -> Result<Option<NodeId>> {
         let dir_inode = self.inode(dir)?;
-        if !dir_inode.is_dir {
+        if dir_inode.kind != FileKind::Directory {
             return Err(FoldError::NotDirectory);
         }
         let mut found: Option<Inode> = None;
@@ -210,23 +281,16 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
 
     fn read_dir(&mut self, dir: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Vec<DirEntry>> {
         let dir_inode = self.inode(dir)?;
-        if !dir_inode.is_dir {
+        if dir_inode.kind != FileKind::Directory {
             return Err(FoldError::NotDirectory);
         }
         let mut collected: Vec<(String, Inode)> = Vec::new();
         self.for_each_entry(dir_inode, |n, inode| collected.push((n, inode)))?;
         let mut out = Vec::with_capacity(collected.len());
         for (name, inode) in collected {
+            let kind = inode.kind;
             let node = self.intern(inode);
-            out.push(DirEntry {
-                name,
-                node,
-                kind: if inode.is_dir {
-                    FileKind::Directory
-                } else {
-                    FileKind::Regular
-                },
-            });
+            out.push(DirEntry { name, node, kind });
         }
         Ok(out)
     }
@@ -234,11 +298,7 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
     fn metadata(&mut self, node: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Metadata> {
         let inode = self.inode(node)?;
         Ok(Metadata {
-            kind: if inode.is_dir {
-                FileKind::Directory
-            } else {
-                FileKind::Regular
-            },
+            kind: inode.kind,
             size: u64::from(inode.size),
             mode: 0,
         })
@@ -252,7 +312,7 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
         _cx: &mut SubstrateCtx<'_>,
     ) -> Result<usize> {
         let inode = self.inode(node)?;
-        if inode.is_dir {
+        if inode.kind == FileKind::Directory {
             return Err(FoldError::IsDirectory);
         }
         let size = u64::from(inode.size);
@@ -265,6 +325,10 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
         let at = u64::from(inode.lba) * u64::from(self.block_size) + off;
         self.src.read_at(at, &mut buf[..n])?;
         Ok(n)
+    }
+
+    fn read_link(&mut self, node: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Option<Vec<u8>>> {
+        Ok(self.inode(node)?.link_target)
     }
 }
 

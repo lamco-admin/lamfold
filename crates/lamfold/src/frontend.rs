@@ -93,4 +93,13 @@ pub trait FoldFrontend<S: BlockSource>: Sized {
         buf: &mut [u8],
         cx: &mut SubstrateCtx<'_>,
     ) -> Result<usize>;
+
+    /// The target of a symbolic link (raw bytes), or `None` if `node` is not a
+    /// symlink. Default: the format has no symlinks. Frontends that carry POSIX
+    /// semantics (ISO9660 Rock Ridge, squashfs, erofs) override this; the boot
+    /// path uses it to resolve e.g. `/boot/vmlinuz` → the real kernel.
+    fn read_link(&mut self, node: NodeId, cx: &mut SubstrateCtx<'_>) -> Result<Option<Vec<u8>>> {
+        let _ = (node, cx);
+        Ok(None)
+    }
 }
