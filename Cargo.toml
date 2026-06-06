@@ -32,7 +32,7 @@ homepage = "https://lamco.ai/products/lamboot/"
 
 [workspace.dependencies]
 # --- the substrate core (internal member; frontends depend on it) ---
-lamfold = { path = "crates/lamfold", version = "0.1", default-features = false } # caret: frontends accept any lamfold 0.1.x (a substrate patch needs NO frontend republish)
+lamfold = { path = "crates/lamfold", version = "0.1.1", default-features = false } # caret ^0.1.1: floor raised because lamfold-erofs needs microlzma_block_decode (added in 0.1.1); already-published frontends keep their "0.1" dep and still resolve forward — no republish forced
 
 # --- L2 parse substrate ---
 zerocopy = { version = "=0.8.50", default-features = false, features = ["derive"] }

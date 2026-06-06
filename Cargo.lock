@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "lamfold"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lz4_flex",
  "lzma-rust2",
@@ -160,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "lamfold-erofs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lamfold",
 ]
