@@ -8,9 +8,14 @@
 
 use crate::error::{FoldError, Result};
 
-/// Largest single file lamfold will allocate for a full read. 256 MiB comfortably
-/// covers a kernel + initrd while bounding a hostile inode size.
-pub const MAX_BOOT_FILE_BYTES: u64 = 256 * 1024 * 1024;
+/// Largest single file lamfold will allocate for a full read, while bounding a
+/// hostile inode size. 512 MiB — kept in lockstep with LamBoot's consumer-side
+/// `read_limit_pure::MAX_BOOT_FILE_BYTES`. The earlier 256 MiB was too small: a
+/// real distro early-initramfs already exceeds it (Fedora-Workstation-Live-44's
+/// `/boot/x86_64/loader/initrd` is 275 MiB; archiso's is 238 MiB), so a 256 MiB
+/// cap rejected a legitimate boot file (`file_too_large`) and produced an empty
+/// initrd. Verified against real ISOs in the A2 live-VM matrix (2026-06-05).
+pub const MAX_BOOT_FILE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Largest single decompressed block lamfold will produce. Filesystem block /
 /// cluster sizes are small (squashfs ≤ 1 MiB, erofs clusters smaller); 16 MiB is
@@ -59,6 +64,16 @@ mod tests {
         let e = checked_full_read_len(MAX_BOOT_FILE_BYTES + 1).unwrap_err();
         assert!(matches!(e, FoldError::FileTooLarge { .. }));
         assert_eq!(e.as_token(), "file_too_large");
+    }
+
+    #[test]
+    fn accepts_real_distro_initrd_over_256mib() {
+        // Regression guard for the A2 live-VM matrix finding: a real distro
+        // early-initramfs exceeds the old 256 MiB cap. Both must be accepted now.
+        let archiso = 238_531_280u64; // archlinux-2026.05 initramfs-linux.img
+        let fedora = 275_797_175u64; // Fedora-WS-Live-44 /boot/x86_64/loader/initrd
+        assert!(checked_full_read_len(archiso).is_ok());
+        assert_eq!(checked_full_read_len(fedora).unwrap() as u64, fedora);
     }
 
     #[test]
