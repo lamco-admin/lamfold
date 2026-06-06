@@ -27,12 +27,17 @@ include = [
 
 [features]
 # Uncompressed EROFS needs no codec; the integrity story (the shepherd) is on by
-# default. `lz4` adds the validated COMPRESSED_FULL + LZ4 read path; lzma/zstd/
-# deflate heads and the compact (datalayout 3) index are a later stage.
+# default. The compact (datalayout 3) index is always read; each compression head
+# is a cargo feature so a bootloader build pulls only the codecs its media needs.
+# `lz4` stays the default codec (lean bootloader); `deflate`/`zstd`/`lzma` are
+# opt-in. A disabled codec surfaces a clean `Unsupported` (the substrate stub).
 default = ["std", "verity", "lz4"]
 std = ["lamfold/std"]
 verity = ["lamfold/verify"]
 lz4 = ["lamfold/codec-lz4"]
+deflate = ["lamfold/codec-deflate"]
+zstd = ["lamfold/codec-zstd"]
+lzma = ["lamfold/codec-xz"]
 
 [dependencies]
 lamfold = { workspace = true }
