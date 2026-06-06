@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "lamfold"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "lz4_flex",
  "lzma-rust2",
@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "lamfold-cpio"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "cpio_reader",
  "lamfold",
@@ -153,42 +153,42 @@ dependencies = [
 
 [[package]]
 name = "lamfold-cramfs"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "lamfold",
 ]
 
 [[package]]
 name = "lamfold-erofs"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "lamfold",
 ]
 
 [[package]]
 name = "lamfold-iso"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "lamfold",
 ]
 
 [[package]]
 name = "lamfold-romfs"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "lamfold",
 ]
 
 [[package]]
 name = "lamfold-squash"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "lamfold",
 ]
 
 [[package]]
 name = "lamfold-udf"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "lamfold",
 ]
