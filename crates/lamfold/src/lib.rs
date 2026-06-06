@@ -39,7 +39,7 @@ mod verify;
 mod verity;
 
 pub use cache::BlockCache;
-pub use codec::{decode, lz4_block_with_dict, Codec};
+pub use codec::{decode, lz4_block_with_dict, microlzma_block_decode, Codec};
 pub use error::{FoldError, Result};
 pub use frontend::{DirEntry, FileKind, FoldFrontend, Metadata, NodeId, SubstrateCtx};
 pub use path::{metadata_path, read_dir_path, read_path, resolve, MAX_SYMLINKS};

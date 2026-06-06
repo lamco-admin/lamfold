@@ -78,6 +78,67 @@ pub fn lz4_block_with_dict(_: &[u8], _: usize, _: &[u8]) -> Result<Vec<u8>> {
     Err(FoldError::Unsupported("codec-lz4 feature disabled"))
 }
 
+/// Decode an EROFS **MicroLZMA** pcluster — a raw LZMA1 range-coded stream with
+/// no `.xz`/`.lzma` container, no 13-byte header, and no end-of-stream marker
+/// (the decompressed length is known). [`decode`]`(Codec::Xz, ..)` is the wrong
+/// path here: `XzReader` requires the `.xz` magic and rejects MicroLZMA.
+///
+/// `span` is the on-disk stream whose **first byte is a discard slot** occupying
+/// LZMA1's mandatory leading `0x00`; this swaps it for `0x00` and feeds the rest
+/// verbatim. `props` is the LZMA properties byte (mkfs writes the constant
+/// `0x5d` = lc3/lp0/pb2). `dict_size` is the volume's configured window; it is a
+/// floor, not the literal window — on a barely-compressible multi-block pcluster
+/// the encoder's match distances reach across the whole decompressed output, so
+/// the window is widened to `max(dict_size, expected_len)` (a larger window never
+/// breaks a stream that used shorter distances). Mirrors `lz4_block_with_dict`'s
+/// role as the EROFS-specific escape hatch outside the uniform [`decode`] shape.
+#[cfg(feature = "codec-xz")]
+pub fn microlzma_block_decode(
+    span: &[u8],
+    props: u8,
+    dict_size: u32,
+    expected_len: usize,
+) -> Result<Vec<u8>> {
+    use lzma_rust2::Read as _;
+    let _ = checked_block_len(expected_len as u64)?;
+    let (&discard, body) = span
+        .split_first()
+        .ok_or(FoldError::Decompress("erofs microlzma: empty span"))?;
+    let _ = discard; // the slot value (mkfs writes 0xA2) is overwritten below
+    let mut stream = Vec::with_capacity(span.len());
+    stream.push(0x00u8);
+    stream.extend_from_slice(body);
+    let window = core::cmp::max(dict_size, expected_len as u32);
+    let mut rdr = lzma_rust2::LzmaReader::new_with_props(
+        stream.as_slice(),
+        expected_len as u64,
+        props,
+        window,
+        None,
+    )
+    .map_err(|_| FoldError::Decompress("erofs microlzma: init"))?;
+    let mut out = alloc::vec![0u8; expected_len];
+    let mut filled = 0;
+    while filled < expected_len {
+        let n = rdr
+            .read(&mut out[filled..])
+            .map_err(|_| FoldError::Decompress("erofs microlzma: read"))?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    if filled != expected_len {
+        return Err(FoldError::Decompress("erofs microlzma: short output"));
+    }
+    Ok(out)
+}
+
+#[cfg(not(feature = "codec-xz"))]
+pub fn microlzma_block_decode(_: &[u8], _: u8, _: u32, _: usize) -> Result<Vec<u8>> {
+    Err(FoldError::Unsupported("codec-xz feature disabled"))
+}
+
 #[cfg(feature = "codec-deflate")]
 fn inflate_zlib(input: &[u8], expected_len: usize) -> Result<Vec<u8>> {
     miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(input, expected_len)
