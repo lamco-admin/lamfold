@@ -11,8 +11,10 @@
 resolver = "2"
 members = ["crates/*"]
 
+# NOTE: no shared `version` here — each crate in crates/* declares its OWN
+# version, so a fix in one crate bumps only that crate (no lockstep republish).
+# See RELEASING.md. Shared metadata below stays shared.
 [workspace.package]
-version = "0.0.2"
 edition = "2021"
 # The honest floor of the current dependency set (ruzstd 0.8.3 needs 1.87; every
 # other pin is lower). Not an artificial hold: the Debian path builds on the
@@ -30,7 +32,7 @@ homepage = "https://lamco.ai/products/lamboot/"
 
 [workspace.dependencies]
 # --- the substrate core (internal member; frontends depend on it) ---
-lamfold = { path = "crates/lamfold", version = "0.0.2", default-features = false }
+lamfold = { path = "crates/lamfold", version = "0.1", default-features = false } # caret: frontends accept any lamfold 0.1.x (a substrate patch needs NO frontend republish)
 
 # --- L2 parse substrate ---
 zerocopy = { version = "=0.8.50", default-features = false, features = ["derive"] }
