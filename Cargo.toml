@@ -35,17 +35,22 @@ homepage = "https://lamco.ai/products/lamboot/"
 lamfold = { path = "crates/lamfold", version = "0.1.1", default-features = false } # caret ^0.1.1: floor raised because lamfold-erofs needs microlzma_block_decode (added in 0.1.1); already-published frontends keep their "0.1" dep and still resolve forward — no republish forced
 
 # --- L2 parse substrate ---
-zerocopy = { version = "=0.8.50", default-features = false, features = ["derive"] }
+# Not exact-pinned like its siblings below: lzokay 2.0.1 itself requires
+# zerocopy ^0.8.27, so an exact =0.8.26 here is unresolvable against real
+# upstream lzokay. The floor is lzokay's, not ours; Debian packaging carries
+# its own relax patch (mirroring the existing one on lzokay) down to the
+# 0.8.26 actually in the archive, same as it already does for lzokay itself.
+zerocopy = { version = ">=0.8.27, <0.9", default-features = false, features = ["derive"] }
 
 # --- L2 codec registry (all permissive no_std; members add `optional = true`) ---
 miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
-lz4_flex = { version = "=0.13.1", default-features = false, features = ["safe-decode", "safe-encode"] }
+lz4_flex = { version = "=0.13.0", default-features = false, features = ["safe-decode", "safe-encode"] }
 ruzstd = { version = "=0.8.3", default-features = false }
 lzma-rust2 = { version = "=0.16.4", default-features = false, features = ["xz"] }
 lzokay = { version = "=2.0.1", default-features = false, features = ["decompress", "alloc"] }
 
 # --- shepherd (integrity) ---
-sha2 = { version = "0.10", default-features = false }
+sha2 = { version = "=0.11.0", default-features = false }
 
 # --- L3 reused frontend parser (permissive, no_std) ---
 # cpio is a trivial public archive format with a clean MIT/Apache no_std reader;
