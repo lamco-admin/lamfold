@@ -5,11 +5,11 @@
 
 [package]
 name = "lamfold-erofs"
-description = "no_std clean-room EROFS reader — the lamfold forward-standard frontend, with the fs-verity integrity story"
+description = "no_std read-only EROFS reader with fs-verity checks, the lamfold frontend for EROFS images, from Lamco Development LLC"
 readme = "README.md"
 keywords = ["erofs", "filesystem", "no_std", "fs-verity", "composefs"]
 categories = ["filesystem", "no-std", "embedded"]
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,6 +20,7 @@ documentation = "https://docs.rs/lamfold-erofs"
 include = [
     "src/**/*.rs",
     "README.md",
+    "CHANGELOG.md",
     "NOTICE",
     "LICENSE-APACHE",
     "LICENSE-MIT",
@@ -49,3 +50,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [badges]
 maintenance = { status = "actively-developed" }
+
+[dev-dependencies]
+# The lz4_zeropad fixture is checked by the SHA-256 of its one file.
+sha2 = { workspace = true }

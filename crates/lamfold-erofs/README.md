@@ -1,8 +1,13 @@
 # lamfold-erofs
 
-> The EROFS frontend of the [`lamfold`](../lamfold) read-only media stack —
-> clean-room EROFS (uncompressed) **plus the shepherd**, the fs-verity integrity
-> story.
+[![Crates.io](https://img.shields.io/crates/v/lamfold-erofs.svg)](https://crates.io/crates/lamfold-erofs)
+[![Docs.rs](https://docs.rs/lamfold-erofs/badge.svg)](https://docs.rs/lamfold-erofs)
+[![CI](https://github.com/lamco-admin/lamfold/actions/workflows/ci.yml/badge.svg)](https://github.com/lamco-admin/lamfold/actions/workflows/ci.yml)
+[![Website](https://img.shields.io/badge/website-lamco.ai-blue.svg)](https://lamco.ai/products/lamboot/)
+
+> The EROFS frontend of the [`lamfold`](../lamfold) read-only media stack:
+> Clean-room EROFS, compressed and uncompressed, **plus the shepherd**, the
+> fs-verity integrity story.
 
 Reads over a `lamfold::BlockSource` and implements `lamfold::FoldFrontend`.
 EROFS is the forward standard for immutable images — the metadata format
@@ -11,26 +16,39 @@ images — so this is where the lamfold stack meets the shepherd: read the
 metadata here, anchor trust in lamfold's native fs-verity Merkle. Spec:
 `the lamfold design spec` §4 + §7.
 
-## Status — forward standard + the integrity differentiator
+- **Website:** [LamBoot](https://lamco.ai/products/lamboot/), the bootloader lamfold is written for
+- **Documentation:** [docs.rs/lamfold-erofs](https://docs.rs/lamfold-erofs) and the [LamBoot docs](https://lamco.ai/products/lamboot/docs/)
+- **Repository:** [github.com/lamco-admin/lamfold](https://github.com/lamco-admin/lamfold)
+- **Company:** [Lamco Development LLC](https://lamco.ai/)
+
+## What it reads
 
 | Layer | State |
 | ----- | ----- |
-| **Superblock** (byte 1024, magic `0xE0F5E1E2`, blkszbits, root nid, meta blkaddr) | ✅ done + tested |
-| **Inodes** — compact (32 B) + extended (64 B), POSIX mode → kind | ✅ done + tested |
-| **Data layouts** — `FLAT_PLAIN` + `FLAT_INLINE` (full blocks + inline tail) | ✅ done + tested |
-| **Directories** — `erofs_dirent` array + names, multi-block | ✅ done + tested |
-| **Symlinks** via `read_link` (inline target) | ✅ done + tested |
-| **The shepherd** — `MerkleVerifier` gates every data block read; tampered media → `VerifyFailed` | ✅ done + tested |
-| Compressed clusters (lz4 / lzma / zstd / deflate), chunk-based files, xattrs, shared-xattr area | ⏳ second stage |
+| Superblock, compact (32 B) and extended (64 B) inodes, directories, symlinks | Read |
+| `FLAT_PLAIN` and `FLAT_INLINE` data | Read |
+| Compressed files, full (legacy) and compact indexes, big pclusters | Read, with lz4, lzma (custom lc/lp/pb too), deflate and zstd behind their features |
+| Block sizes from 512 bytes to 4 KiB | Read |
+| The shepherd: `MerkleVerifier` gates every data block read; tampered media fails with `VerifyFailed` | Done |
+| Fragments and all-fragments (Fedora's live images, lorax), compressed directories (`--zD`), the 48-bit layout, metabox, extra devices, unknown incompat features | Refused at open with `Unsupported` |
+| ztailpacking, interlaced pclusters, chunk-based files | Refused per file with `Unsupported` |
 
-**Complete (uncompressed path + integrity).** Verified against a **real**
-`mkfs.erofs` image: probe, tree walk, pure-inline files, a 300 KB file across 73
-full blocks + a 992 B inline tail (full, partial across the boundary, EOF), a
-nested directory, and a symlink. The shepherd is exercised end to end — a
-`MerkleVerifier` built over genuine content verifies all 74 blocks as they are
-read, and a single flipped byte on the medium is refused before any data is
-surfaced. Builds default + `--no-default-features` (`no_std`), clippy
-`-D warnings` clean, `#![forbid(unsafe_code)]`.
+Nothing on the refused list is misread: An image that uses one of them fails to
+open, or the file that uses it fails to read, with a typed error.
+
+Tested against images from erofs-utils 1.8.6 and 1.9.4: Every option above
+over a mixed tree, a tree of real executables (which exposed a silent LZ4 misread
+in 0.1.1), files whose inline xattrs put the index on a 32-byte boundary, and
+smaller blocks. The committed fixtures and the script that builds them are in
+`tests/fixtures/`.
+
+## Installation
+
+```sh
+cargo add lamfold-erofs
+```
+
+The `lz4` codec is on by default; enable `deflate`, `zstd` and `lzma` as needed.
 
 ## The shepherd (integrity)
 
@@ -53,8 +71,17 @@ or copied.
 
 ```bash
 cargo build
-cargo test                                   # walks tests/fixtures/erofs.img
+cargo test --features deflate,zstd,lzma      # every fixture in tests/fixtures/
 cargo build --no-default-features            # no_std check
 ```
 
-MIT OR Apache-2.0.
+## Contributing
+
+Issues and pull requests are welcome at
+[github.com/lamco-admin/lamfold](https://github.com/lamco-admin/lamfold). A
+change to the read path should come with a fixture built by
+`tests/fixtures/regenerate.sh`.
+
+## License
+
+MIT OR Apache-2.0, copyright Lamco Development LLC.

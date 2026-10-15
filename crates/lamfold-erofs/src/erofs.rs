@@ -22,6 +22,20 @@ use lamfold::{
 const SUPER_OFFSET: u64 = 1024;
 const MAGIC: u32 = 0xE0F5_E1E2;
 
+// Superblock fields read at open, as offsets into the 128-byte superblock.
+const SB_FEATURE_INCOMPAT: usize = 80;
+const SB_EXTRA_DEVICES: usize = 86;
+const SB_PACKED_NID: usize = 96;
+
+// `feature_incompat` bits. Three values carry two features each (0x2 is
+// COMPR_CFGS and BIG_PCLUSTER, 0x8 DEVICE_TABLE and COMPR_HEAD2, 0x20 FRAGMENTS
+// and DEDUPE), so for those the superblock fields decide: an extra device
+// count for the device table, a packed inode for fragments.
+const INCOMPAT_LZ4_0PADDING: u32 = 0x0001;
+const INCOMPAT_48BIT: u32 = 0x0080;
+const INCOMPAT_METABOX: u32 = 0x0100;
+const INCOMPAT_KNOWN: u32 = 0x01ff;
+
 // datalayout (bits 1..=3 of i_format)
 const FLAT_PLAIN: u8 = 0;
 const FLAT_INLINE: u8 = 2;
@@ -37,10 +51,16 @@ const COMPRESSED_COMPACT: u8 = 3;
 const ADVISE_COMPACTED_2B: u16 = 0x0001;
 const ADVISE_BIG_PCLUSTER: u16 = 0x0002 | 0x0004;
 const ADVISE_INLINE_PCLUSTER: u16 = 0x0008;
+// Set with fragments: an uncompressed pcluster's data is rotated by its
+// clusterofs rather than stored left-aligned.
+const ADVISE_INTERLACED_PCLUSTER: u16 = 0x0010;
 const ADVISE_FRAGMENT: u16 = 0x0020;
+// `h_clusterbits` bit 7: the whole file lives in the packed inode, and the
+// first four header bytes are its offset there.
+const CLUSTERBITS_WHOLE_FILE_FRAGMENT: u8 = 0x80;
 
-// Compact per-lcluster entry: `encodebits` = 2-bit type + `lobits` (= lclusterbits
-// == 12, the only validated geometry) of value. A NONHEAD whose value has
+// Compact per-lcluster entry: `encodebits` = 2-bit type + `lobits` of value, where
+// lobits is lclusterbits but never below 12 (the validated range is up to 12). A NONHEAD whose value has
 // `CBLKCNT_FLAG` set encodes its pcluster's compressed-block count in the low bits.
 const COMPACT_LOBITS: u32 = 12;
 const COMPACT_ENCBITS: u32 = 14;
@@ -52,9 +72,9 @@ const ALGO_LZMA: u8 = 1;
 const ALGO_DEFLATE: u8 = 2;
 const ALGO_ZSTD: u8 = 3;
 
-// MicroLZMA properties byte mkfs writes (lc3/lp0/pb2); the on-disk
-// `z_erofs_lzma_cfgs.format` is 0 in every validated image, so props are not stored.
-const MICROLZMA_PROPS: u8 = 0x5d;
+// The largest valid LZMA properties byte: (pb * 5 + lp) * 9 + lc with lc < 9,
+// lp < 5 and pb < 5.
+const LZMA_PROPS_MAX: u8 = 224;
 // EROFS compression-config region: `available_compr_algs` bitmap, then the per-algo
 // config blobs right after the 128-byte superblock.
 const COMPR_ALGS_OFF: u64 = 1024 + 84;
@@ -98,6 +118,10 @@ struct Head {
 pub struct Erofs<S: BlockSource> {
     src: S,
     block_size: u64,
+    blkszbits: u8,
+    /// `LZ4_0PADDING`: an LZ4 stream starts at its pcluster's first non-zero
+    /// byte, any bytes before it being padding.
+    lz4_zero_padding: bool,
     meta_off: u64,
     root_nid: u64,
     /// inode cache keyed by nid (parse once).
@@ -293,27 +317,37 @@ impl<S: BlockSource> Erofs<S> {
         let advise = u16::from_le_bytes([hdr[4], hdr[5]]);
         let head1_algo = hdr[6] & 0x0f;
         let head2_algo = (hdr[6] >> 4) & 0x0f;
-        let lcbits = u32::from(hdr[7] & 7) + 12;
-        let lcsize = 1u64 << lcbits;
-        let n_lc = i_size.div_ceil(lcsize);
 
-        // Refuse layout variants whose data is not where the index points.
-        if advise & (ADVISE_INLINE_PCLUSTER | ADVISE_FRAGMENT) != 0 {
+        // Refuse layout variants whose data is not where the index points. The
+        // superblock check already refuses fragments; these guard an inode that
+        // claims one anyway.
+        if hdr[7] & CLUSTERBITS_WHOLE_FILE_FRAGMENT != 0
+            || advise & (ADVISE_INLINE_PCLUSTER | ADVISE_INTERLACED_PCLUSTER | ADVISE_FRAGMENT) != 0
+        {
             return Err(FoldError::Unsupported(
-                "erofs: ztailpacking / fragment pclusters not supported",
+                "erofs: ztailpacking / fragment / interlaced pclusters not supported",
             ));
         }
+        // A logical cluster is the block size shifted by the header's low bits.
+        let lcbits = u32::from(self.blkszbits) + u32::from(hdr[7] & 0x0f);
+        if lcbits > 30 {
+            return Err(FoldError::Corrupt("erofs: implausible lclusterbits"));
+        }
+        let lcsize = 1u64 << lcbits;
+        let n_lc = i_size.div_ceil(lcsize);
 
         let heads = match layout {
             COMPRESSED_FULL => self.build_heads_full(mh, lcsize, n_lc)?,
             COMPRESSED_COMPACT => {
-                // The compact bit-packing is validated only at lclusterbits == 12
-                // and with the 2-byte-amortized packing (the mkfs default). The
-                // all-4B layout (COMPACTED_2B clear) uses a different zone shape and
-                // is refused until validated rather than mis-unpacked.
-                if lcbits != 12 {
+                // Compact entries keep at least 12 value bits (room for a cblkcnt),
+                // so their packing is the same for every lclusterbits up to 12 (4
+                // KiB clusters and the smaller blocks of -b 512/1024/2048 images);
+                // only the cluster size differs. Above 12 the packing widens and
+                // is refused until validated. The all-4B layout (COMPACTED_2B
+                // clear) uses a different zone shape and is refused too.
+                if lcbits > COMPACT_LOBITS {
                     return Err(FoldError::Unsupported(
-                        "erofs: compact index with lclusterbits != 12",
+                        "erofs: compact index with lclusterbits above 12",
                     ));
                 }
                 if advise & ADVISE_COMPACTED_2B == 0 {
@@ -350,7 +384,15 @@ impl<S: BlockSource> Erofs<S> {
                 head1_algo
             };
             let span = self.read_span(h.blkaddr, h.cblkcnt)?;
-            let seg = decode_pcluster(h.ty, algo, &span, outlen, &out, self.lzma_dict_size)?;
+            let seg = decode_pcluster(
+                h.ty,
+                algo,
+                &span,
+                outlen,
+                &out,
+                self.lzma_dict_size,
+                self.lz4_zero_padding,
+            )?;
             out.extend_from_slice(&seg);
         }
         self.decoded.insert(nid, out);
@@ -429,7 +471,7 @@ impl<S: BlockSource> Erofs<S> {
         read_4b_groups(&buf, &mut pos, c4i, &mut rid, &mut raw)?;
         read_2b_packs(&buf, &mut pos, c2b, &mut rid, &mut raw)?;
         read_4b_groups(&buf, &mut pos, c4f, &mut rid, &mut raw)?;
-        resolve_compact_heads(&raw, lcsize, advise, ebase)
+        resolve_compact_heads(&raw, lcsize, advise)
     }
 
     /// Parse the dirents in one directory data block.
@@ -493,11 +535,15 @@ impl<S: BlockSource> FoldFrontend<S> for Erofs<S> {
             return Err(FoldError::Corrupt("erofs: implausible blkszbits"));
         }
         let block_size = 1u64 << blkszbits;
+        let incompat = le_u32(&sb, SB_FEATURE_INCOMPAT)?;
+        refuse_unsupported_features(&sb, incompat)?;
         let root_nid = u64::from(le_u16(&sb, 14)?);
         let meta_off = u64::from(le_u32(&sb, 40)?) * block_size;
         let mut me = Erofs {
             src,
             block_size,
+            blkszbits,
+            lz4_zero_padding: incompat & INCOMPAT_LZ4_0PADDING != 0,
             meta_off,
             root_nid,
             inodes: BTreeMap::new(),
@@ -718,21 +764,10 @@ fn read_bits_lsb(buf: &[u8], bit_pos: u32) -> Result<u32> {
 /// Resolve the unpacked lcluster entries into pclusters: each HEAD/PLAIN opens one
 /// (the first at logical 0). NONHEADs carry no extent. blkaddr resolution differs
 /// by layout: non-big uses each pack's `base + 1 + (HEADs before it in the pack)`;
-/// big-pcluster uses a global running sum of cblkcnt anchored at the first base.
-fn resolve_compact_heads(
-    raw: &[RawEntry],
-    lcsize: u64,
-    advise: u16,
-    ebase: u64,
-) -> Result<Vec<Head>> {
+/// big-pcluster uses a global running sum of cblkcnt starting at the first base
+/// itself, whichever kind of region it came from.
+fn resolve_compact_heads(raw: &[RawEntry], lcsize: u64, advise: u16) -> Result<Vec<Head>> {
     let big = advise & ADVISE_BIG_PCLUSTER != 0;
-    // The first amortization region is a 4B group iff the zone partition opens
-    // with an initial 4B run (`compacted_4b_initial > 0`). `ebase` is always
-    // 8-aligned (`mh` is ALIGN(_,8), `ebase = mh + 8`), so this matches the
-    // simpler `ebase & 31 != 0` on every reachable alignment {0,8,16,24}; spell
-    // it as the reference's `c4i > 0` so a non-8-aligned `ebase` (only a hostile,
-    // malformed image) can never desync the anchor from the unpack.
-    let first_is_4b = ((32 - (ebase & 31)) / 4) & 7 != 0;
     let first_base = raw.first().map_or(0, |e| e.base);
 
     let mut heads: Vec<Head> = Vec::new();
@@ -779,13 +814,11 @@ fn resolve_compact_heads(
     }
 
     if big {
-        let mut blk = if first_is_4b {
-            first_base
-        } else {
-            first_base
-                .checked_add(1)
-                .ok_or(FoldError::Corrupt("erofs: compact base overflow"))?
-        };
+        // An index whose base is 32-byte aligned opens with a 2B pack rather than
+        // a 4B group; 0.1.1 added one block for that case, which misplaced every
+        // pcluster of such a file (any file whose inline xattrs bring the index
+        // base to a 32-byte boundary, as a 52- or 56-byte SELinux label does).
+        let mut blk = first_base;
         for k in 0..heads.len() {
             if k > 0 {
                 blk = blk
@@ -808,6 +841,7 @@ fn decode_pcluster(
     outlen: usize,
     prior_out: &[u8],
     lzma_dict: Option<u32>,
+    lz4_zero_padding: bool,
 ) -> Result<Vec<u8>> {
     match ty {
         LC_TYPE_PLAIN => {
@@ -821,7 +855,9 @@ fn decode_pcluster(
                     "erofs: plain pcluster shorter than output",
                 ))
         }
-        LC_TYPE_HEAD1 | LC_TYPE_HEAD2 => decode_head(algo, span, outlen, prior_out, lzma_dict),
+        LC_TYPE_HEAD1 | LC_TYPE_HEAD2 => {
+            decode_head(algo, span, outlen, prior_out, lzma_dict, lz4_zero_padding)
+        }
         _ => Err(FoldError::Corrupt("erofs: non-head pcluster in decode")),
     }
 }
@@ -835,11 +871,12 @@ fn decode_head(
     outlen: usize,
     prior_out: &[u8],
     lzma_dict: Option<u32>,
+    lz4_zero_padding: bool,
 ) -> Result<Vec<u8>> {
     match algo {
         ALGO_LZ4 => {
             let win = &prior_out[prior_out.len().saturating_sub(LZ4_WINDOW)..];
-            lz4_pcluster(span, outlen, win)
+            lz4_pcluster(span, outlen, win, lz4_zero_padding)
         }
         ALGO_DEFLATE => deflate_pcluster(span, outlen),
         ALGO_ZSTD => zstd_pcluster(span, outlen),
@@ -853,27 +890,28 @@ fn decode_head(
     }
 }
 
-/// LZ4 pcluster. Like the other codecs, mkfs right-aligns the lz4 stream within
-/// the pcluster's blocks on a short/partial-final pcluster: the stream occupies
-/// the last `complen` bytes and any leading bytes are zero padding. A full
-/// pcluster is left-aligned (start 0). lz4 self-terminates at `outlen`, so a
-/// wrong start either errors or yields the wrong length — accept the start (0,
-/// else the first non-zero byte) whose dict-decode produces exactly `outlen`
-/// bytes. (`win` is the sliding-window dictionary: the prior decoded output.)
-fn lz4_pcluster(span: &[u8], outlen: usize, win: &[u8]) -> Result<Vec<u8>> {
-    let fnz = span.iter().position(|&b| b != 0).unwrap_or(0);
-    for start in [0usize, fnz] {
-        let tail = span.get(start..).unwrap_or(&[]);
-        if let Ok(v) = lz4_block_with_dict(tail, outlen, win) {
-            if v.len() == outlen {
-                return Ok(v);
-            }
-        }
-        if start == fnz {
-            break;
-        }
+/// LZ4 pcluster. On an `LZ4_0PADDING` volume mkfs right-aligns the stream within
+/// the pcluster's blocks, and the stream starts at the first non-zero byte: The
+/// kernel skips every leading zero byte, so that is the only start it reads.
+/// Trying offset 0 as well is wrong, because a single leading padding byte also
+/// decodes "successfully" (0x00 is a valid LZ4 token) into the wrong bytes. A
+/// volume without the feature stores the stream at offset 0. (`win` is the
+/// sliding-window dictionary: the prior decoded output.)
+fn lz4_pcluster(span: &[u8], outlen: usize, win: &[u8], zero_padding: bool) -> Result<Vec<u8>> {
+    let start = if zero_padding {
+        span.iter()
+            .position(|&b| b != 0)
+            .ok_or(FoldError::Corrupt("erofs lz4: all-zero pcluster"))?
+    } else {
+        0
+    };
+    match lz4_block_with_dict(&span[start..], outlen, win) {
+        Ok(v) if v.len() == outlen => Ok(v),
+        Ok(_) => Err(FoldError::Corrupt(
+            "erofs lz4: stream decoded to the wrong length",
+        )),
+        Err(e) => Err(e),
     }
-    Err(FoldError::Corrupt("erofs lz4: no valid stream start"))
 }
 
 /// Raw-DEFLATE pcluster. The stream ends at the span's last byte; any leading
@@ -909,14 +947,48 @@ fn zstd_pcluster(span: &[u8], outlen: usize) -> Result<Vec<u8>> {
 }
 
 /// MicroLZMA pcluster: a raw LZMA1 stream right-aligned to the span. Its first
-/// non-zero byte is the discard slot (mkfs writes the constant `0xA2`);
-/// `microlzma_block_decode` swaps it for LZMA1's mandatory leading `0x00`.
+/// non-zero byte holds the LZMA properties inverted (`!props`), which the kernel
+/// reads back; mkfs writes `!0x5d` unless given custom lc/lp/pb (erofs-utils
+/// 1.9). `microlzma_block_decode` swaps that byte for LZMA1's leading `0x00`.
 fn lzma_pcluster(span: &[u8], outlen: usize, dict_size: u32) -> Result<Vec<u8>> {
     let start = span
         .iter()
         .position(|&b| b != 0)
         .ok_or(FoldError::Corrupt("erofs lzma: all-zero span"))?;
-    microlzma_block_decode(&span[start..], MICROLZMA_PROPS, dict_size, outlen)
+    let props = !span[start];
+    if props > LZMA_PROPS_MAX {
+        return Err(FoldError::Corrupt("erofs lzma: invalid properties byte"));
+    }
+    microlzma_block_decode(&span[start..], props, dict_size, outlen)
+}
+
+/// Refuse at open what this reader can't read correctly anywhere in the
+/// volume, rather than misreading files one by one.
+fn refuse_unsupported_features(sb: &[u8], incompat: u32) -> Result<()> {
+    if incompat & !INCOMPAT_KNOWN != 0 {
+        return Err(FoldError::Unsupported(
+            "erofs: unknown incompatible feature",
+        ));
+    }
+    // Metabox needs the 48-bit layout, so check it first to name the cause.
+    if incompat & INCOMPAT_METABOX != 0 {
+        return Err(FoldError::Unsupported("erofs: metabox not supported"));
+    }
+    if incompat & INCOMPAT_48BIT != 0 {
+        return Err(FoldError::Unsupported("erofs: 48-bit layout not supported"));
+    }
+    if le_u16(sb, SB_EXTRA_DEVICES)? != 0 {
+        return Err(FoldError::Unsupported("erofs: extra devices not supported"));
+    }
+    // Fragments keep file tails, or whole files, in a packed inode this reader
+    // doesn't implement yet; mkfs -Efragments and -Eall-fragments (Fedora's
+    // live images, lorax) make one.
+    if le_u64(sb, SB_PACKED_NID)? != 0 {
+        return Err(FoldError::Unsupported(
+            "erofs: fragments (packed inode) not supported",
+        ));
+    }
+    Ok(())
 }
 
 fn ft_kind(file_type: u8) -> FileKind {
