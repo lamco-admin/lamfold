@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "lamfold"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lz4_flex",
  "lzma-rust2",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "lamfold-cpio"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cpio_reader",
  "lamfold",
@@ -160,9 +160,9 @@ checksum = "db9a0d582c2874f68138a16ce1867e0ffde6c0bb0a0df85e1f36d04146db488a"
 
 [[package]]
 name = "lzma-rust2"
-version = "0.16.4"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce716bf1a316f47a280fc76295f6495b5bea4752bca01c3b3885e101b1c23c02"
+checksum = "5c1bf3331fb5cf60f2ef15b63361f6cc39492a5d94c096053c395515e17d147f"
 dependencies = [
  "sha2",
 ]

@@ -4,11 +4,11 @@
 
 [package]
 name = "lamfold-cpio"
-description = "no_std initramfs/newc cpio frontend for lamfold — a FoldFrontend tree over the permissive cpio_reader"
+description = "no_std read-only cpio and initramfs reader (chained newc and CRC archives, hard links), the lamfold initramfs frontend, from Lamco Development LLC"
 readme = "README.md"
 keywords = ["cpio", "initramfs", "no_std", "newc", "uefi"]
 categories = ["filesystem", "no-std", "embedded"]
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,6 +19,7 @@ documentation = "https://docs.rs/lamfold-cpio"
 include = [
     "src/**/*.rs",
     "README.md",
+    "CHANGELOG.md",
     "NOTICE",
     "LICENSE-APACHE",
     "LICENSE-MIT",

@@ -5,6 +5,19 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crate
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each frontend
 crate keeps its own changelog.
 
+## [0.1.4] - 2026-10-15
+
+### Changed
+
+- Dependencies are minimums at the versions in the Debian archive instead of
+  exact pins, so Debian builds lamfold against whatever its archive holds and
+  crates.io users get bug-fix releases (`miniz_oxide` 0.9.1, `lz4_flex`
+  0.13.0, `lzokay` 2.0.1, `sha2` 0.11.0). Exact pins also forced every
+  consumer down to them: LamBoot's `lz4_flex` went from 0.13.1 back to
+  0.13.0.
+- `lzma-rust2` 0.16.4 to 0.19.0, the version in Debian's archive. The LZMA
+  and xz call sites are unchanged.
+
 ## [0.1.3] - 2026-10-15
 
 ### Security
