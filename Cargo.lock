@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "lamfold"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "lz4_flex",
  "lzma-rust2",
@@ -112,9 +112,10 @@ dependencies = [
 
 [[package]]
 name = "lamfold-erofs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "lamfold",
+ "sha2",
 ]
 
 [[package]]
@@ -204,9 +205,9 @@ dependencies = [
 
 [[package]]
 name = "ruzstd"
-version = "0.8.3"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
+checksum = "69e4ce4a039f42bf25920b95667e4d789e98749ab11bbb8d2c2936f788421bb5"
 
 [[package]]
 name = "sha2"

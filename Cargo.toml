@@ -32,7 +32,7 @@ homepage = "https://lamco.ai/products/lamboot/"
 
 [workspace.dependencies]
 # --- the substrate core (internal member; frontends depend on it) ---
-lamfold = { path = "crates/lamfold", version = "0.1.1", default-features = false } # caret ^0.1.1: floor raised because lamfold-erofs needs microlzma_block_decode (added in 0.1.1); already-published frontends keep their "0.1" dep and still resolve forward — no republish forced
+lamfold = { path = "crates/lamfold", version = "0.1.3", default-features = false } # caret ^0.1.3: floor raised so a republished frontend pulls in the ruzstd 0.9.1 substrate (RUSTSEC-2026-0344); already-published frontends keep their older floor and still resolve forward, so no republish is forced
 
 # --- L2 parse substrate ---
 # Not exact-pinned like its siblings below: lzokay 2.0.1 itself requires
@@ -45,7 +45,10 @@ zerocopy = { version = ">=0.8.27, <0.9", default-features = false, features = ["
 # --- L2 codec registry (all permissive no_std; members add `optional = true`) ---
 miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
 lz4_flex = { version = "=0.13.0", default-features = false, features = ["safe-decode", "safe-encode"] }
-ruzstd = { version = "=0.8.3", default-features = false }
+# Caret from 0.9.1, the first release with the RUSTSEC-2026-0344 fix (upstream
+# decision 21: ruzstd ^0.9.1 across the LamBoot crates). Debian carries a relax
+# patch until its archive has 0.9.1.
+ruzstd = { version = "0.9.1", default-features = false }
 lzma-rust2 = { version = "=0.16.4", default-features = false, features = ["xz"] }
 lzokay = { version = "=2.0.1", default-features = false, features = ["decompress", "alloc"] }
 

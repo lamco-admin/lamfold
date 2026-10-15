@@ -4,11 +4,11 @@
 
 [package]
 name = "lamfold"
-description = "no_std read-only media filesystem stack — substrate core (codec registry, immutable-block cache, bounded zero-copy parse, frontend trait, integrity-verification seam)"
+description = "no_std read-only media filesystem stack, the substrate core (codec registry, block cache, bounded parsing, frontend trait, integrity seam), from Lamco Development LLC"
 readme = "README.md"
 keywords = ["filesystem", "read-only", "no_std", "iso9660", "squashfs"]
 categories = ["filesystem", "no-std", "embedded"]
-version = "0.1.2"
+version = "0.1.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,6 +19,7 @@ documentation = "https://docs.rs/lamfold"
 include = [
     "src/**/*.rs",
     "README.md",
+    "CHANGELOG.md",
     "NOTICE",
     "LICENSE-APACHE",
     "LICENSE-MIT",
