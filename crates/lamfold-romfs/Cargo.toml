@@ -4,11 +4,11 @@
 
 [package]
 name = "lamfold-romfs"
-description = "no_std clean-room Linux romfs (-rom1fs-) reader — the lamfold minimal-embedded frontend"
+description = "no_std read-only Linux romfs reader, the lamfold minimal-embedded frontend, from Lamco Development LLC"
 readme = "README.md"
 keywords = ["romfs", "filesystem", "no_std", "embedded", "uefi"]
 categories = ["filesystem", "no-std", "embedded"]
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,6 +19,7 @@ documentation = "https://docs.rs/lamfold-romfs"
 include = [
     "src/**/*.rs",
     "README.md",
+    "CHANGELOG.md",
     "NOTICE",
     "LICENSE-APACHE",
     "LICENSE-MIT",

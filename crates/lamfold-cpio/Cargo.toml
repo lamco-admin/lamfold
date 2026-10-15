@@ -8,7 +8,7 @@ description = "no_std read-only cpio and initramfs reader (chained newc and CRC 
 readme = "README.md"
 keywords = ["cpio", "initramfs", "no_std", "newc", "uefi"]
 categories = ["filesystem", "no-std", "embedded"]
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -26,8 +26,15 @@ include = [
 ]
 
 [features]
-default = ["std"]
+# A compressed initramfs member is decoded with the matching lamfold codec;
+# with one of these off, that member is refused instead.
+default = ["std", "gzip", "zstd", "xz", "lz4"]
 std = ["lamfold/std"]
+gzip = ["lamfold/codec-deflate"]
+zstd = ["lamfold/codec-zstd"]
+# xz and the legacy .lzma format
+xz = ["lamfold/codec-xz"]
+lz4 = ["lamfold/codec-lz4"]
 
 [dependencies]
 lamfold = { workspace = true }

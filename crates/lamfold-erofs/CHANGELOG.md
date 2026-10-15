@@ -4,6 +4,24 @@ All notable changes to lamfold-erofs are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crate follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-10-15
+
+### Added
+
+- **Chunk-based files** (`mkfs.erofs --chunksize`, composefs-style images): The
+  4-byte block map after the inode locates each chunk, and a chunk at the null
+  address is a hole that reads as zeros. 0.1.2 refused every such file.
+
+### Fixed
+
+- The compression configs are found after the superblock's extension slots
+  (`sb_extslots`) rather than at a fixed offset.
+- Linux 7.2's hole pclusters (the HEAD lcluster's hole bit in a full index, or
+  a zero block count in a compact one) are refused rather than decoded as data.
+  No released erofs-utils writes them yet.
+- 8-byte chunk indexes, which mkfs.erofs writes only for chunks on a blob
+  device, are refused with `Unsupported`.
+
 ## [0.1.2] - 2026-10-15
 
 ### Fixed

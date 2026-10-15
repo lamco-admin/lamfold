@@ -27,7 +27,8 @@ earlier `lamoptical` scaffold. Spec: `the lamfold design spec` §4.
 | Joliet (UCS-2 supplementary descriptor; Rock Ridge, then Joliet, then the base names) | Read |
 | El Torito: the UEFI boot image through `el_torito_uefi_image()`, sized from its FAT boot sector when the catalog's count is 0 | Read |
 | zisofs (paged zlib through the substrate codec, `zisofs` feature) | Read |
-| `CL`/`PL`/`RE` deep-directory relocation; multi-extent files of 4 GiB or more | Not yet |
+| Multi-extent files, how a file of 4 GiB or more is recorded, as one node read across every extent with 64-bit sizes | Read (0.1.2) |
+| `CL`/`PL`/`RE` deep-directory relocation | Not yet |
 
 Tested against `xorriso` images: plain ISO 9660, `-R`, `-J`, `-e` UEFI El Torito,
 `--zisofs`, and (since 0.1.1) a Rock Ridge tree whose empty files and symlinks

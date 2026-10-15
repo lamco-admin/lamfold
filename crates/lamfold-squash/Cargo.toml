@@ -4,11 +4,11 @@
 
 [package]
 name = "lamfold-squash"
-description = "no_std clean-room SquashFS reader — the lamfold compressed-read-only frontend (the live-ISO root)"
+description = "no_std read-only SquashFS 4.0 reader (gzip, xz, zstd, lz4, lzo), the lamfold frontend for live-ISO root images, from Lamco Development LLC"
 readme = "README.md"
 keywords = ["squashfs", "filesystem", "no_std", "compression", "uefi"]
 categories = ["filesystem", "no-std", "embedded"]
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,6 +19,7 @@ documentation = "https://docs.rs/lamfold-squash"
 include = [
     "src/**/*.rs",
     "README.md",
+    "CHANGELOG.md",
     "NOTICE",
     "LICENSE-APACHE",
     "LICENSE-MIT",

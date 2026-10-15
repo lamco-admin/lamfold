@@ -7,6 +7,8 @@
 //! * `codec` — the decompression-codec registry (deflate/lz4 wired; zstd/xz/lzo
 //!   declared), one decoder shared across all compressed formats ([`decode`],
 //!   [`lz4_block_with_dict`]).
+//! * `stream` — whole-stream decoding for data of unknown size, such as a
+//!   compressed initramfs member ([`decode_stream`], [`StreamCodec`]).
 //! * [`BlockCache`] — an immutable decompressed-block LRU (read-only ⇒ no
 //!   invalidation).
 //! * `read_cap` — bounded-allocation hardening (no OOM on a hostile size;
@@ -34,6 +36,7 @@ mod frontend;
 mod path;
 mod read_cap;
 mod source;
+mod stream;
 mod verify;
 #[cfg(feature = "verify")]
 mod verity;
@@ -47,6 +50,7 @@ pub use read_cap::{
     checked_block_len, checked_full_read_len, MAX_BOOT_FILE_BYTES, MAX_DECOMPRESSED_BLOCK_BYTES,
 };
 pub use source::{BlockSource, SliceSource};
+pub use stream::{decode_stream, StreamCodec};
 pub use verify::{NoVerifier, Verifier};
 #[cfg(feature = "verify")]
 pub use verity::{fsverity_digest_sha256, MerkleVerifier, Sha256Digest, DEFAULT_BLOCK_LOG};

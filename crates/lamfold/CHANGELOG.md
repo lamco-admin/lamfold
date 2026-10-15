@@ -5,6 +5,19 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crate
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each frontend
 crate keeps its own changelog.
 
+## [0.1.5] - 2026-10-15
+
+### Added
+
+- `decode_stream` and `StreamCodec`: Decode a whole compressed stream whose
+  size isn't recorded anywhere (gzip with its CRC-32 and size trailer checked,
+  zstd frames and skippable frames, xz, the legacy `.lzma` format and LZ4
+  legacy frames), refusing output past a caller's cap, and report how much
+  input the stream used so the caller can continue after it.
+  `StreamCodec::sniff` recognises a stream by its magic, bzip2 and lzop
+  included (those are refused). lamfold-cpio uses it for compressed initramfs
+  members.
+
 ## [0.1.4] - 2026-10-15
 
 ### Changed

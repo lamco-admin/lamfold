@@ -59,7 +59,15 @@ mod dr {
     pub const LEN_FI: usize = 32;
     pub const FILE_ID: usize = 33;
     pub const FLAG_DIRECTORY: u8 = 0x02;
+    /// Another record of the same file follows with the next extent
+    /// (ECMA-119 §9.1.6): How a file of 4 GiB or more is recorded.
+    pub const FLAG_MULTI_EXTENT: u8 = 0x80;
 }
+
+/// Most extents one file may have. A 2048-byte directory sector holds at most
+/// about 60 records, so this allows a file of several TiB while bounding a
+/// hostile directory.
+const MAX_EXTENTS: usize = 4096;
 
 #[derive(Clone)]
 struct Inode {
@@ -69,7 +77,10 @@ struct Inode {
     /// makes a node distinct.
     key: (u32, u32),
     lba: u32,
-    size: u32,
+    /// The data length: The sum of `extents` for a multi-extent file.
+    size: u64,
+    /// Every extent in order, `(lba, length)`. A single-extent file has one.
+    extents: Vec<(u32, u32)>,
     kind: FileKind,
     /// Symlink target bytes (Rock Ridge `SL`), `None` for non-symlinks.
     link_target: Option<Vec<u8>>,
@@ -119,7 +130,7 @@ impl<S: BlockSource> Iso9660<S> {
 
     /// Read a directory's whole extent into memory (read-capped).
     fn read_dir_extent(&mut self, inode: Inode) -> Result<Vec<u8>> {
-        let len = checked_full_read_len(u64::from(inode.size))?;
+        let len = checked_full_read_len(inode.size)?;
         let mut buf = vec![0u8; len];
         let off = u64::from(inode.lba) * u64::from(self.block_size);
         self.src.read_at(off, &mut buf)?;
@@ -147,12 +158,15 @@ impl<S: BlockSource> Iso9660<S> {
     }
 
     /// Iterate the records in a directory extent, invoking `f` for each non-dot
-    /// entry with (name, child Inode).
+    /// entry with (name, child Inode). The records of a multi-extent file are
+    /// gathered into one entry, named and keyed by its first record.
     fn for_each_entry(&mut self, dir: Inode, mut f: impl FnMut(String, Inode)) -> Result<()> {
         let dir_lba = dir.lba;
         let buf = self.read_dir_extent(dir)?;
         let bs = self.block_size as usize;
         let mut pos = 0usize;
+        // The first record and the extents so far of a multi-extent file.
+        let mut pending: Option<(String, Inode)> = None;
         while pos < buf.len() {
             let len = buf[pos] as usize;
             if len == 0 {
@@ -182,6 +196,26 @@ impl<S: BlockSource> Iso9660<S> {
                 let is_dir = flags & dr::FLAG_DIRECTORY != 0;
                 let lba = le_u32(rec, dr::EXTENT_LBA_LE)?;
                 let size = le_u32(rec, dr::DATA_LEN_LE)?;
+                let more = flags & dr::FLAG_MULTI_EXTENT != 0;
+
+                // A later record of a multi-extent file adds its extent.
+                if let Some((first, mut inode)) = pending.take() {
+                    if is_dir || fi != first_fi(&buf, inode.key.1 as usize)? {
+                        return Err(FoldError::Corrupt("iso: broken multi-extent chain"));
+                    }
+                    if inode.extents.len() >= MAX_EXTENTS {
+                        return Err(FoldError::Corrupt("iso: too many extents"));
+                    }
+                    inode.extents.push((lba, size));
+                    inode.size += u64::from(size);
+                    if more {
+                        pending = Some((first, inode));
+                    } else {
+                        f(first, inode);
+                    }
+                    pos += len;
+                    continue;
+                }
 
                 let mut name = if self.joliet {
                     decode_name_joliet(fi, is_dir)?
@@ -214,19 +248,27 @@ impl<S: BlockSource> Iso9660<S> {
                         zisofs = rr.zisofs;
                     }
                 }
-                f(
-                    name,
-                    Inode {
-                        key: (dir_lba, pos as u32),
-                        lba,
-                        size,
-                        kind,
-                        link_target,
-                        zisofs,
-                    },
-                );
+                let inode = Inode {
+                    key: (dir_lba, pos as u32),
+                    lba,
+                    size: u64::from(size),
+                    extents: vec![(lba, size)],
+                    kind,
+                    link_target,
+                    zisofs,
+                };
+                if more && !is_dir {
+                    pending = Some((name, inode));
+                } else {
+                    f(name, inode);
+                }
             }
             pos += len;
+        }
+        if pending.is_some() {
+            return Err(FoldError::Corrupt(
+                "iso: multi-extent file without its last record",
+            ));
         }
         Ok(())
     }
@@ -486,7 +528,7 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
         // compressed extent recorded in the directory record.
         let size = inode
             .zisofs
-            .map_or(u64::from(inode.size), |z| u64::from(z.uncompressed_size));
+            .map_or(inode.size, |z| u64::from(z.uncompressed_size));
         Ok(Metadata {
             kind: inode.kind,
             size,
@@ -515,21 +557,52 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
                 "zisofs-compressed file: enable the `zisofs` feature",
             ));
         }
-        let size = u64::from(inode.size);
-        if off >= size {
+        if off >= inode.size {
             return Ok(0);
         }
-        let n = core::cmp::min(buf.len() as u64, size - off) as usize;
-        // Base ISO9660 files are a single contiguous extent (multi-extent is an
-        // extension handled separately).
-        let at = u64::from(inode.lba) * u64::from(self.block_size) + off;
-        self.src.read_at(at, &mut buf[..n])?;
-        Ok(n)
+        let n = core::cmp::min(buf.len() as u64, inode.size - off) as usize;
+        // Walk the extents in order; a read may span from one into the next.
+        let bs = u64::from(self.block_size);
+        let mut done = 0usize;
+        let mut start = 0u64; // file offset where the current extent begins
+        for &(lba, len) in &inode.extents {
+            let len = u64::from(len);
+            let pos = off + done as u64;
+            if done == n {
+                break;
+            }
+            if pos < start + len {
+                let within = pos - start;
+                let take = core::cmp::min((n - done) as u64, len - within) as usize;
+                let at = u64::from(lba) * bs + within;
+                self.src.read_at(at, &mut buf[done..done + take])?;
+                done += take;
+            }
+            start += len;
+        }
+        Ok(done)
     }
 
     fn read_link(&mut self, node: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Option<Vec<u8>>> {
         Ok(self.inode(node)?.link_target)
     }
+}
+
+/// The file identifier of the directory record at `pos` of `buf`.
+fn first_fi(buf: &[u8], pos: usize) -> Result<&[u8]> {
+    let len = usize::from(
+        *buf.get(pos)
+            .ok_or(FoldError::Corrupt("iso: short record"))?,
+    );
+    let rec = buf
+        .get(pos..pos + len)
+        .ok_or(FoldError::Corrupt("iso: directory record overruns extent"))?;
+    let fi_len = usize::from(
+        *rec.get(dr::LEN_FI)
+            .ok_or(FoldError::Corrupt("iso: short record"))?,
+    );
+    rec.get(dr::FILE_ID..dr::FILE_ID + fi_len)
+        .ok_or(FoldError::Corrupt("iso: file id overruns record"))
 }
 
 /// Extract the root directory record (offset 156, 34 bytes) of a volume
@@ -538,10 +611,13 @@ fn root_record(vd: &[u8]) -> Result<Inode> {
     let rdr = vd
         .get(156..156 + 34)
         .ok_or(FoldError::Corrupt("iso: short root directory record"))?;
+    let lba = le_u32(rdr, dr::EXTENT_LBA_LE)?;
+    let size = le_u32(rdr, dr::DATA_LEN_LE)?;
     Ok(Inode {
         key: ROOT_KEY,
-        lba: le_u32(rdr, dr::EXTENT_LBA_LE)?,
-        size: le_u32(rdr, dr::DATA_LEN_LE)?,
+        lba,
+        size: u64::from(size),
+        extents: vec![(lba, size)],
         kind: FileKind::Directory,
         link_target: None,
         zisofs: None,

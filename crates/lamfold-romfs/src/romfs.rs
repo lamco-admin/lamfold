@@ -17,9 +17,14 @@ use lamfold::{
 
 const MAGIC: &[u8; 8] = b"-rom1fs-";
 const MAX_NAME: usize = 256;
+/// genromfs writes a hard link to a non-link header, so one hop is normal;
+/// a longer chain is corrupt (and might be a loop).
+const MAX_LINK_HOPS: usize = 8;
 
-// file types (low 3 bits of `next`); hard link (0) and devices/fifo/socket
-// (4..=7) fall through to FileKind::Other.
+// file types (low 3 bits of `next`); devices/fifo/socket (4..=7) fall
+// through to FileKind::Other. A hard link (0) names its target's header in
+// `info` and is resolved to it.
+const FT_HARDLINK: u32 = 0;
 const FT_DIRECTORY: u32 = 1;
 const FT_REGULAR: u32 = 2;
 const FT_SYMLINK: u32 = 3;
@@ -64,6 +69,19 @@ impl<S: BlockSource> Romfs<S> {
             data_off: off + 16 + align16(nul + 1) as u64,
             name,
         })
+    }
+
+    /// The header at `off`, with a hard link resolved to its target. Returns
+    /// the target's offset too, which is the node a link stands for.
+    fn resolved_header(&mut self, mut off: u64) -> Result<(u64, Header)> {
+        for _ in 0..=MAX_LINK_HOPS {
+            let h = self.read_header(off)?;
+            if h.ftype != FT_HARDLINK {
+                return Ok((off, h));
+            }
+            off = h.info;
+        }
+        Err(FoldError::Corrupt("romfs: hard link chain too long"))
     }
 
     fn kind(ftype: u32) -> FileKind {
@@ -128,7 +146,7 @@ impl<S: BlockSource> FoldFrontend<S> for Romfs<S> {
     }
 
     fn read_dir(&mut self, dir: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Vec<DirEntry>> {
-        let head = self.read_header(dir)?;
+        let (_, head) = self.resolved_header(dir)?;
         if head.ftype != FT_DIRECTORY {
             return Err(FoldError::NotDirectory);
         }
@@ -141,10 +159,12 @@ impl<S: BlockSource> FoldFrontend<S> for Romfs<S> {
             }
             let h = self.read_header(o)?;
             if h.name != "." && h.name != ".." {
+                // A hard link stands for its target: Same node, same data.
+                let (node, target) = self.resolved_header(o)?;
                 out.push(DirEntry {
                     name: h.name,
-                    node: o,
-                    kind: Self::kind(h.ftype),
+                    node,
+                    kind: Self::kind(target.ftype),
                 });
             }
             o = h.next_off;
@@ -153,7 +173,7 @@ impl<S: BlockSource> FoldFrontend<S> for Romfs<S> {
     }
 
     fn metadata(&mut self, node: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Metadata> {
-        let h = self.read_header(node)?;
+        let (_, h) = self.resolved_header(node)?;
         Ok(Metadata {
             kind: Self::kind(h.ftype),
             size: h.size,
@@ -168,7 +188,7 @@ impl<S: BlockSource> FoldFrontend<S> for Romfs<S> {
         buf: &mut [u8],
         _cx: &mut SubstrateCtx<'_>,
     ) -> Result<usize> {
-        let h = self.read_header(node)?;
+        let (_, h) = self.resolved_header(node)?;
         if h.ftype == FT_DIRECTORY {
             return Err(FoldError::IsDirectory);
         }
@@ -181,7 +201,7 @@ impl<S: BlockSource> FoldFrontend<S> for Romfs<S> {
     }
 
     fn read_link(&mut self, node: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Option<Vec<u8>>> {
-        let h = self.read_header(node)?;
+        let (_, h) = self.resolved_header(node)?;
         if h.ftype != FT_SYMLINK {
             return Ok(None);
         }

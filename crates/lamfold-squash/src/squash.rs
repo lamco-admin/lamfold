@@ -29,8 +29,10 @@ enum Body {
         size: u32,
     },
     File {
-        blocks_start: u64,
         block_sizes: Vec<u32>,
+        /// Absolute offset of each block in `block_sizes` (a sparse block
+        /// takes no space, so it shares the next block's offset).
+        block_offsets: Vec<u64>,
         frag_idx: u32,
         frag_off: u32,
     },
@@ -100,6 +102,19 @@ impl<S: BlockSource> SquashFs<S> {
         Ok(out)
     }
 
+    /// Where each data block starts: They follow `blocks_start` back to back.
+    fn block_offsets(blocks_start: u64, block_sizes: &[u32]) -> Vec<u64> {
+        let mut at = blocks_start;
+        block_sizes
+            .iter()
+            .map(|&bs| {
+                let here = at;
+                at += u64::from(bs & SIZE_MASK);
+                here
+            })
+            .collect()
+    }
+
     fn block_count(&self, size: u64, frag_idx: u32) -> usize {
         let bs = u64::from(self.block_size);
         if frag_idx != NO_FRAGMENT {
@@ -148,14 +163,14 @@ impl<S: BlockSource> SquashFs<S> {
                 let size = u64::from(le_u32(&h, 28)?);
                 let n = self.block_count(size, frag_idx);
                 let full = self.read_meta_span(abs, off, 32 + n * 4)?;
-                let block_sizes = (0..n)
+                let block_sizes: Vec<u32> = (0..n)
                     .map(|i| le_u32(&full, 32 + i * 4))
                     .collect::<Result<_>>()?;
                 Ok(SquashInode {
                     kind: FileKind::Regular,
                     size,
                     body: Body::File {
-                        blocks_start,
+                        block_offsets: Self::block_offsets(blocks_start, &block_sizes),
                         block_sizes,
                         frag_idx,
                         frag_off,
@@ -170,14 +185,14 @@ impl<S: BlockSource> SquashFs<S> {
                 let frag_off = le_u32(&h, 48)?;
                 let n = self.block_count(size, frag_idx);
                 let full = self.read_meta_span(abs, off, 56 + n * 4)?;
-                let block_sizes = (0..n)
+                let block_sizes: Vec<u32> = (0..n)
                     .map(|i| le_u32(&full, 56 + i * 4))
                     .collect::<Result<_>>()?;
                 Ok(SquashInode {
                     kind: FileKind::Regular,
                     size,
                     body: Body::File {
-                        blocks_start,
+                        block_offsets: Self::block_offsets(blocks_start, &block_sizes),
                         block_sizes,
                         frag_idx,
                         frag_off,
@@ -292,46 +307,6 @@ impl<S: BlockSource> SquashFs<S> {
             decode(self.codec, &raw, self.block_size as usize)
         }
     }
-
-    /// Read a whole file's bytes (data blocks + fragment tail), read-capped.
-    fn read_file(
-        &mut self,
-        size: u64,
-        blocks_start: u64,
-        block_sizes: &[u32],
-        frag_idx: u32,
-        frag_off: u32,
-    ) -> Result<Vec<u8>> {
-        let total = checked_full_read_len(size)?;
-        let mut out = Vec::with_capacity(total);
-        let mut at = blocks_start;
-        for &bs in block_sizes {
-            if out.len() >= total {
-                break;
-            }
-            let len = (bs & SIZE_MASK) as usize;
-            if len == 0 {
-                // sparse full block → zero-fill up to one block (or the remainder)
-                let n = core::cmp::min(self.block_size as usize, total - out.len());
-                out.resize(out.len() + n, 0);
-            } else {
-                let block = self.read_data_block(at, bs)?;
-                at += len as u64;
-                out.extend_from_slice(&block);
-            }
-        }
-        if frag_idx != NO_FRAGMENT && out.len() < total {
-            let frag = self.read_fragment(frag_idx)?;
-            let start = frag_off as usize;
-            let take = total - out.len();
-            let tail = frag
-                .get(start..start + take)
-                .ok_or(FoldError::Corrupt("squashfs: fragment tail OOB"))?;
-            out.extend_from_slice(tail);
-        }
-        out.truncate(total);
-        Ok(out)
-    }
 }
 
 impl<S: BlockSource> FoldFrontend<S> for SquashFs<S> {
@@ -443,8 +418,8 @@ impl<S: BlockSource> FoldFrontend<S> for SquashFs<S> {
     ) -> Result<usize> {
         let inode = self.inode(node)?;
         let Body::File {
-            blocks_start,
             block_sizes,
+            block_offsets,
             frag_idx,
             frag_off,
         } = &inode.body
@@ -458,12 +433,42 @@ impl<S: BlockSource> FoldFrontend<S> for SquashFs<S> {
         if off >= inode.size {
             return Ok(0);
         }
-        // Read the whole file then slice. Streaming per-block is a follow-up.
-        let data = self.read_file(inode.size, *blocks_start, block_sizes, *frag_idx, *frag_off)?;
-        let start = off as usize;
-        let n = core::cmp::min(buf.len(), data.len().saturating_sub(start));
-        buf[..n].copy_from_slice(&data[start..start + n]);
-        Ok(n)
+        // Only the blocks the window touches are read and decoded, so a read
+        // costs at most one block beyond its length, whatever the file's size.
+        let bs = u64::from(self.block_size);
+        let end = core::cmp::min(inode.size, off + buf.len() as u64);
+        let mut pos = off;
+        while pos < end {
+            let idx = (pos / bs) as usize;
+            let within = (pos % bs) as usize;
+            let block_len = core::cmp::min(bs, inode.size - idx as u64 * bs) as usize;
+            let want = core::cmp::min(block_len - within, (end - pos) as usize);
+            let dst = &mut buf[(pos - off) as usize..(pos - off) as usize + want];
+            if let Some(&raw) = block_sizes.get(idx) {
+                if raw & SIZE_MASK == 0 {
+                    // A sparse block: all zeros, stored as nothing.
+                    dst.fill(0);
+                } else {
+                    let block = self.read_data_block(block_offsets[idx], raw)?;
+                    let src = block.get(within..within + want).ok_or(FoldError::Corrupt(
+                        "squashfs: data block shorter than its file",
+                    ))?;
+                    dst.copy_from_slice(src);
+                }
+            } else if *frag_idx != NO_FRAGMENT && idx == block_sizes.len() {
+                // The tail lives in a shared fragment block.
+                let frag = self.read_fragment(*frag_idx)?;
+                let start = *frag_off as usize + within;
+                let src = frag
+                    .get(start..start + want)
+                    .ok_or(FoldError::Corrupt("squashfs: fragment tail OOB"))?;
+                dst.copy_from_slice(src);
+            } else {
+                return Err(FoldError::Corrupt("squashfs: file longer than its blocks"));
+            }
+            pos += want as u64;
+        }
+        Ok((end - off) as usize)
     }
 
     fn read_link(&mut self, node: NodeId, _cx: &mut SubstrateCtx<'_>) -> Result<Option<Vec<u8>>> {

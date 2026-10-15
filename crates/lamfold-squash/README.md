@@ -1,40 +1,41 @@
 # lamfold-squash
 
-> The SquashFS frontend of the [`lamfold`](../lamfold) read-only media stack —
-> clean-room SquashFS 4.0 (gzip / xz / zstd / lz4 / lzo).
+[![Crates.io](https://img.shields.io/crates/v/lamfold-squash.svg)](https://crates.io/crates/lamfold-squash)
+[![Docs.rs](https://docs.rs/lamfold-squash/badge.svg)](https://docs.rs/lamfold-squash)
+[![CI](https://github.com/lamco-admin/lamfold/actions/workflows/ci.yml/badge.svg)](https://github.com/lamco-admin/lamfold/actions/workflows/ci.yml)
+[![Website](https://img.shields.io/badge/website-lamco.ai-blue.svg)](https://lamco.ai/products/lamboot/)
+
+> The SquashFS frontend of the [`lamfold`](../lamfold) read-only media stack:
+> Clean-room SquashFS 4.0 (gzip, xz, zstd, lz4, lzo).
 
 Reads over a `lamfold::BlockSource` and implements `lamfold::FoldFrontend`, so it
-composes through LamBoot's `dispatch_fs_over_source` — **including recursively**
-over a file inside another volume. SquashFS is the root filesystem inside almost
-every Linux live ISO, so this frontend is the recursion payoff: mounted over the
-squashfs-root *file inside* an ISO9660 image (a `FileBlockSource` loopback), it
-reads the live root directly. Spec: `the lamfold design spec` §4.
+composes through LamBoot's `dispatch_fs_over_source`, including recursively over
+a file inside another volume. SquashFS is the root filesystem inside almost every
+Linux live ISO, so this frontend reads the live root straight out of an ISO.
+Spec: `the lamfold design spec` §4.
 
-## Status — compressed read-only frontend
+- **Website:** [LamBoot](https://lamco.ai/products/lamboot/), the bootloader lamfold is written for
+- **Documentation:** [docs.rs/lamfold-squash](https://docs.rs/lamfold-squash) and the [LamBoot docs](https://lamco.ai/products/lamboot/docs/)
+- **Repository:** [github.com/lamco-admin/lamfold](https://github.com/lamco-admin/lamfold)
+- **Company:** [Lamco Development LLC](https://lamco.ai/)
+
+## What it reads
 
 | Layer | State |
 | ----- | ----- |
-| **Superblock** — magic, block size, compression id → substrate codec, table offsets | ✅ done + tested |
-| **Compressed metadata blocks** — 2-byte header, substrate decompress, cross-block spans | ✅ done + tested |
-| **Inodes** — basic + extended directories, files, symlinks | ✅ done + tested |
-| **Directory listings** — header runs + entries, child inode-ref reconstruction | ✅ done + tested |
-| **Data blocks** — per-block compressed/uncompressed flag, multi-block reassembly, sparse zero-fill | ✅ done + tested |
-| **Fragments** — the shared tail-block table, fragment read + decompress | ✅ done + tested |
-| `read_link` (symlink targets) | ✅ done |
-| xattrs, export/lookup table, directory index (we linear-scan), streaming per-block `read_at` | ⏳ future |
+| Superblock, compressed metadata blocks, basic and extended directory, file and symlink inodes, directory listings | Read |
+| Data blocks (compressed or stored), sparse blocks as zeros, fragment tails | Read |
+| **`read_at` decodes only the blocks it touches**, so a file of any size reads in pieces | Read (0.1.1) |
+| xattrs, the export and lookup tables, the directory index (listings are scanned) | Not used |
 
-**Complete.** Verified against a **real** `mksquashfs -comp gzip` image:
-probe, tree walk, a nested directory, two fragment-packed small files, and a
-300 KB three-block file (full + partial reads, EOF). Every compressed metadata,
-data, and fragment block is decompressed through the shared substrate codec.
-Builds default + `--no-default-features`, `no_std`, `#![forbid(unsafe_code)]` —
-every on-disk field read through bounds-checked little-endian helpers, every
-allocation through the substrate read cap.
+Legacy `lzma1` (id 2) is refused with `Unsupported`. Verified against real
+`mksquashfs` images, including a 600 MiB sparse file larger than lamfold's
+whole-file read cap. `#![forbid(unsafe_code)]`.
 
 ## Compression features
 
-A SquashFS image is built with exactly one compressor; each maps to a substrate
-codec behind an opt-in cargo feature (all on by default):
+A SquashFS image uses one compressor; each maps to a substrate codec behind an
+opt-in feature (all on by default):
 
 | feature | compression id | substrate codec |
 | ------- | -------------- | --------------- |
@@ -44,22 +45,37 @@ codec behind an opt-in cargo feature (all on by default):
 | `lz4`   | 5 | `Codec::Lz4` (lz4_flex) |
 | `zstd`  | 6 | `Codec::Zstd` (ruzstd) |
 
-Legacy `lzma1` (id 2) is rejected with `Unsupported`. Disable the codecs you
-don't need to shrink the binary; an image whose compressor is disabled fails
-cleanly with `Unsupported` rather than mis-reading.
+An image whose compressor is disabled fails with `Unsupported` rather than
+misreading.
+
+## Installation
+
+```sh
+cargo add lamfold-squash
+```
 
 ## Clean-room posture
 
-Derived only from the public SquashFS 4.0 format docs and the permissive
-references in `NOTICE`. The GPL implementations (Linux `fs/squashfs`,
-`squashfs-tools`) are fenced off — never read or copied.
+Derived only from the public SquashFS 4.0 format documentation and the
+permissive references in `NOTICE`. The GPL implementations (Linux `fs/squashfs`,
+`squashfs-tools`) are fenced off: Never read or copied; squashfs-tools only
+builds the fixtures.
 
 ## Build / test
 
 ```bash
 cargo build
-cargo test                                   # walks tests/fixtures/gzip.sqfs
+cargo test                                   # every fixture in tests/fixtures/
 cargo build --no-default-features            # no_std check
 ```
 
-MIT OR Apache-2.0.
+## Contributing
+
+Issues and pull requests are welcome at
+[github.com/lamco-admin/lamfold](https://github.com/lamco-admin/lamfold). A
+change to the read path should come with a fixture built by a real tool
+(`mksquashfs`, as `tests/fixtures/regenerate-large.sh` does).
+
+## License
+
+MIT OR Apache-2.0, copyright Lamco Development LLC.

@@ -5,11 +5,11 @@
 
 [package]
 name = "lamfold-udf"
-description = "no_std clean-room UDF (ECMA-167 / OSTA 1.02) reader — the lamfold optical-UDF frontend"
+description = "no_std read-only UDF reader (ECMA-167, OSTA UDF 1.02 to 2.01), the lamfold optical-UDF frontend, from Lamco Development LLC"
 readme = "README.md"
 keywords = ["udf", "filesystem", "no_std", "optical", "uefi"]
 categories = ["filesystem", "no-std", "embedded"]
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,6 +20,7 @@ documentation = "https://docs.rs/lamfold-udf"
 include = [
     "src/**/*.rs",
     "README.md",
+    "CHANGELOG.md",
     "NOTICE",
     "LICENSE-APACHE",
     "LICENSE-MIT",

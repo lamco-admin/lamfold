@@ -4,6 +4,15 @@ All notable changes to lamfold-iso are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crate follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-10-15
+
+### Added
+
+- **Multi-extent files**, how ISO 9660 records a file of 4 GiB or more: The
+  records flagged Multi-Extent and the last one become one node whose size is
+  the sum of the extents, and reads continue across them with 64-bit offsets.
+  0.1.1 listed one entry per extent and read only the first.
+
 ## [0.1.1] - 2026-10-15
 
 ### Fixed

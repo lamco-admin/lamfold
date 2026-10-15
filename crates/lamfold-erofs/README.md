@@ -29,9 +29,11 @@ metadata here, anchor trust in lamfold's native fs-verity Merkle. Spec:
 | `FLAT_PLAIN` and `FLAT_INLINE` data | Read |
 | Compressed files, full (legacy) and compact indexes, big pclusters | Read, with lz4, lzma (custom lc/lp/pb too), deflate and zstd behind their features |
 | Block sizes from 512 bytes to 4 KiB | Read |
+| Chunk-based files (`mkfs.erofs --chunksize`) with a block map, holes as zeros | Read (0.1.3) |
+| Compression configs after superblock extension slots | Read (0.1.3) |
 | The shepherd: `MerkleVerifier` gates every data block read; tampered media fails with `VerifyFailed` | Done |
 | Fragments and all-fragments (Fedora's live images, lorax), compressed directories (`--zD`), the 48-bit layout, metabox, extra devices, unknown incompat features | Refused at open with `Unsupported` |
-| ztailpacking, interlaced pclusters, chunk-based files | Refused per file with `Unsupported` |
+| ztailpacking, interlaced pclusters, 8-byte chunk indexes (mkfs writes them only for a blob device), Linux 7.2's hole pclusters (no released erofs-utils writes them yet) | Refused per file with `Unsupported` |
 
 Nothing on the refused list is misread: An image that uses one of them fails to
 open, or the file that uses it fails to read, with a typed error.

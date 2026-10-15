@@ -4,6 +4,28 @@ All notable changes to lamfold-cpio are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crate follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-10-15
+
+### Added
+
+- **Compressed initramfs members read.** gzip, zstd, xz, legacy `.lzma` and LZ4
+  legacy-frame members are decoded with `lamfold::decode_stream` and their
+  archives folded into the tree, and an archive after a compressed member is
+  found where the member ends. 0.1.1 refused every compressed member. Debian
+  13's own initramfs now reads, every file identical to what `unmkinitramfs`
+  extracts. The decompressed members together are capped at 512 MiB
+  (`lamfold::MAX_BOOT_FILE_BYTES`).
+- Features `gzip`, `zstd`, `xz` and `lz4` (on by default) select the codecs.
+
+### Changed
+
+- bzip2 and lzop members are refused as `Unsupported("stream_bzip2")` and
+  `Unsupported("stream_lzo")` (they were `cpio_compressed_member`), and a
+  compressed archive inside a decompressed one is corrupt, as the kernel
+  treats it.
+- Zero bytes between archives are skipped one at a time, and an archive must
+  start at a 4-byte-aligned offset, as the kernel requires.
+
 ## [0.1.1] - 2026-10-15
 
 ### Fixed

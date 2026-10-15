@@ -39,6 +39,17 @@ const INCOMPAT_KNOWN: u32 = 0x01ff;
 // datalayout (bits 1..=3 of i_format)
 const FLAT_PLAIN: u8 = 0;
 const FLAT_INLINE: u8 = 2;
+/// Chunk-based (`mkfs.erofs --chunksize`, composefs): The data sits in chunks
+/// of `block size << (format & CHUNK_BLKBITS_MASK)` bytes, located through a
+/// table after the inode.
+const CHUNK_BASED: u8 = 4;
+const CHUNK_BLKBITS_MASK: u16 = 0x001f;
+/// 8-byte chunk indexes rather than 4-byte block addresses.
+const CHUNK_INDEXES: u16 = 0x0020;
+const CHUNK_48BIT: u16 = 0x0040;
+const CHUNK_FORMAT_ALL: u16 = 0x007f;
+/// A chunk at this block address is a hole: It reads as zeros.
+const NULL_BLKADDR: u32 = u32::MAX;
 const COMPRESSED_FULL: u8 = 1;
 // COMPRESSED_COMPACT (3) is the bit-packed `mkfs.erofs` default index.
 const COMPRESSED_COMPACT: u8 = 3;
@@ -78,7 +89,11 @@ const LZMA_PROPS_MAX: u8 = 224;
 // EROFS compression-config region: `available_compr_algs` bitmap, then the per-algo
 // config blobs right after the 128-byte superblock.
 const COMPR_ALGS_OFF: u64 = 1024 + 84;
-const COMPR_CFGS_OFF: u64 = 1024 + 128;
+/// The superblock is 128 bytes plus `sb_extslots` slots of 16; the configs
+/// follow it.
+const SB_EXTSLOTS: usize = 13;
+const SB_BASE_SIZE: u64 = 128;
+const SB_EXTSLOT_SIZE: u64 = 16;
 const COMPR_ALG_LZMA_BIT: u16 = 0x0002;
 
 // z_erofs compressed-cluster geometry. The 8-byte `z_erofs_map_header` sits at
@@ -91,6 +106,9 @@ const LC_TYPE_PLAIN: u16 = 0;
 const LC_TYPE_HEAD1: u16 = 1;
 const LC_TYPE_NONHEAD: u16 = 2;
 const LC_TYPE_HEAD2: u16 = 3;
+// Full-index HEAD advise bit 14, added in Linux 7.2: The pcluster is a hole.
+// No released erofs-utils writes it yet, so it's refused rather than guessed.
+const LI_HOLE: u16 = 1 << 14;
 // `lz4_max_distance` is ≤ 65535; a 64 KiB window covers every back-reference.
 const LZ4_WINDOW: usize = 65_536;
 
@@ -134,6 +152,9 @@ pub struct Erofs<S: BlockSource> {
     /// the volume declares no LZMA or an unvalidated config `format`, which makes
     /// any LZMA-head inode surface a clean `Unsupported` rather than a guess.
     lzma_dict_size: Option<u32>,
+    /// Where the compression configs start: after the superblock and its
+    /// extension slots.
+    compr_cfgs_off: u64,
 }
 
 impl<S: BlockSource> Erofs<S> {
@@ -247,10 +268,62 @@ impl<S: BlockSource> Erofs<S> {
                 buf[..total].copy_from_slice(seg);
                 Ok(total)
             }
-            _ => Err(FoldError::Unsupported(
-                "erofs: chunk-indexed datalayout not supported",
-            )),
+            CHUNK_BASED => self.read_chunked(raw_blkaddr, inline_off, off, end, buf),
+            _ => Err(FoldError::Unsupported("erofs: unknown datalayout")),
         }
+    }
+
+    /// Read `off..end` of a chunk-based inode. Its `i_u` holds the chunk
+    /// format; the chunk table, 4-byte block addresses, follows the inode and
+    /// its xattrs, 4-byte aligned. A chunk at [`NULL_BLKADDR`] is a hole.
+    /// mkfs.erofs writes 8-byte chunk indexes only for chunks on a blob
+    /// device, so they're refused like extra devices.
+    fn read_chunked(
+        &mut self,
+        raw_blkaddr: u32,
+        inline_off: u64,
+        off: u64,
+        end: u64,
+        buf: &mut [u8],
+    ) -> Result<usize> {
+        let format = (raw_blkaddr & 0xffff) as u16;
+        if format & !CHUNK_FORMAT_ALL != 0 {
+            return Err(FoldError::Corrupt("erofs: unknown chunk format bits"));
+        }
+        if format & CHUNK_48BIT != 0 {
+            return Err(FoldError::Unsupported(
+                "erofs: 48-bit chunk indexes not supported",
+            ));
+        }
+        let chunkbits = u32::from(self.blkszbits) + u32::from(format & CHUNK_BLKBITS_MASK);
+        if chunkbits > 40 {
+            return Err(FoldError::Corrupt("erofs: implausible chunk size"));
+        }
+        if format & CHUNK_INDEXES != 0 {
+            return Err(FoldError::Unsupported("erofs: chunk indexes not supported"));
+        }
+        let chunk = 1u64 << chunkbits;
+        let table = (inline_off + 3) & !3;
+        let bs = self.block_size;
+        let mut p = off;
+        while p < end {
+            let idx = p / chunk;
+            let within = p % chunk;
+            let seg_end = core::cmp::min(end, (idx + 1) * chunk);
+            let n = (seg_end - p) as usize;
+            let bo = (p - off) as usize;
+            let mut e = [0u8; 4];
+            self.src.read_at(table + idx * 4, &mut e)?;
+            let blkaddr = u32::from_le_bytes(e);
+            if blkaddr == NULL_BLKADDR {
+                buf[bo..bo + n].fill(0);
+            } else {
+                let disk = u64::from(blkaddr) * bs + within;
+                self.src.read_at(disk, &mut buf[bo..bo + n])?;
+            }
+            p = seg_end;
+        }
+        Ok((end - off) as usize)
     }
 
     /// Parse the MicroLZMA window from `z_erofs_lzma_cfgs` once at open. Leaves
@@ -267,7 +340,7 @@ impl<S: BlockSource> Erofs<S> {
         }
         // Config blobs follow the superblock in ascending algorithm-bit order,
         // each `{ __le16 size }{ payload[size] }`. Walk to the LZMA (bit 1) blob.
-        let mut cur = COMPR_CFGS_OFF;
+        let mut cur = self.compr_cfgs_off;
         for alg in 0..16u32 {
             if algs & (1 << alg) == 0 {
                 continue;
@@ -423,9 +496,13 @@ impl<S: BlockSource> Erofs<S> {
         for i in 0..n_lc {
             let mut e = [0u8; 8];
             self.src.read_at(idx0 + i * 8, &mut e)?;
-            let ty = u16::from_le_bytes([e[0], e[1]]) & 3;
+            let advise = u16::from_le_bytes([e[0], e[1]]);
+            let ty = advise & 3;
             if ty == LC_TYPE_NONHEAD {
                 continue;
+            }
+            if advise & LI_HOLE != 0 {
+                return Err(FoldError::Unsupported("erofs: hole pcluster not supported"));
             }
             let clusterofs = u64::from(u16::from_le_bytes([e[2], e[3]]));
             let blkaddr = u32::from_le_bytes([e[4], e[5], e[6], e[7]]);
@@ -549,6 +626,9 @@ impl<S: BlockSource> FoldFrontend<S> for Erofs<S> {
             inodes: BTreeMap::new(),
             decoded: BTreeMap::new(),
             lzma_dict_size: None,
+            compr_cfgs_off: SUPER_OFFSET
+                + SB_BASE_SIZE
+                + u64::from(sb[SB_EXTSLOTS]) * SB_EXTSLOT_SIZE,
         };
         me.parse_lzma_cfg();
         me.parse_inode(root_nid)?;
@@ -780,6 +860,10 @@ fn resolve_compact_heads(raw: &[RawEntry], lcsize: u64, advise: u16) -> Result<V
             if big && e.value & COMPACT_CBLKCNT_FLAG != 0 {
                 if let Some(h) = cur_head {
                     heads[h].cblkcnt = u32::from(e.value & 0x07ff);
+                    // A count of 0 is Linux 7.2's sparse pcluster (a hole).
+                    if heads[h].cblkcnt == 0 {
+                        return Err(FoldError::Unsupported("erofs: hole pcluster not supported"));
+                    }
                 }
             }
             continue;

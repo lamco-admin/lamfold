@@ -1,9 +1,11 @@
-//! UDF 1.02 reader (ECMA-167 / OSTA UDF), clean-roomed from the free specs.
+//! UDF 1.02 to 2.01 reader (ECMA-167 / OSTA UDF), clean-roomed from the free
+//! specs.
 //!
 //! Descriptor chain: Anchor VD Pointer (sector 256) → Main Volume Descriptor
 //! Sequence (Partition Descriptor → partition start; Logical Volume Descriptor →
 //! block size + the File Set Descriptor long_ad) → File Set Descriptor → root
-//! ICB. Inodes are File Entries (tag 261); directory entries are File Identifier
+//! ICB. Inodes are File Entries (tag 261), or Extended File Entries (tag 266)
+//! from UDF 2.00 on; directory entries are File Identifier
 //! Descriptors; file/dir data is inline, short_ad, or long_ad.
 //!
 //! No `unsafe`: every on-disk field is read through bounds-checked little-endian
@@ -94,25 +96,25 @@ impl<S: BlockSource> Udf<S> {
             .ok_or(FoldError::NotFound)
     }
 
-    /// Parse a File Entry (tag 261) at `fe_lba` into an inode (kind + size + the
-    /// resolved data location).
+    /// Parse a File Entry (tag 261) or Extended File Entry (tag 266) at
+    /// `fe_lba` into an inode (kind + size + the resolved data location).
     fn read_fe(&mut self, fe_lba: u32) -> Result<UdfInode> {
         let buf = self.read_block(fe_lba)?;
-        match le_u16(&buf, 0)? {
-            TAG_EXTENDED_FILE_ENTRY => {
-                return Err(FoldError::Unsupported(
-                    "udf: Extended File Entry (UDF 2.x) not yet supported",
-                ))
-            }
-            TAG_FILE_ENTRY => {}
+        // The Extended File Entry (ECMA-167 4/14.17), which UDF 2.00 and later
+        // write, matches the File Entry up to the information length and adds
+        // object size, creation time, a stream directory and a reserved field
+        // before the extended-attribute and allocation-descriptor lengths.
+        let (l_ea_at, l_ad_at, ea_start) = match le_u16(&buf, 0)? {
+            TAG_FILE_ENTRY => (168, 172, 176usize),
+            TAG_EXTENDED_FILE_ENTRY => (208, 212, 216usize),
             _ => return Err(FoldError::Corrupt("udf: expected a File Entry")),
-        }
+        };
         let file_type = *buf.get(27).ok_or(FoldError::Corrupt("udf: short ICBTag"))?;
         let ad_type = le_u16(&buf, 34)? & 0x7;
         let info_len = le_u64(&buf, 56)?;
-        let l_ea = le_u32(&buf, 168)? as usize;
-        let l_ad = le_u32(&buf, 172)? as usize;
-        let ad_off = 176usize
+        let l_ea = le_u32(&buf, l_ea_at)? as usize;
+        let l_ad = le_u32(&buf, l_ad_at)? as usize;
+        let ad_off = ea_start
             .checked_add(l_ea)
             .ok_or(FoldError::Corrupt("udf: L_EA overflow"))?;
 

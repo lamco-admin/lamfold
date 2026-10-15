@@ -27,14 +27,21 @@ directory tree. Spec: `the lamfold design spec` §4.
 | **CRC archives** (`070702`) | Regular files' checksums verified |
 | **odc and old binary archives** (single archive, through `cpio_reader`) | Read |
 | Tree construction (explicit and path-implied directories), regular files as zero-copy views, symlinks via `read_link` | Read |
-| **A compressed archive in the chain** (gzip, bzip2, LZMA, xz, LZO, LZ4, zstd) | Refused: `Unsupported("cpio_compressed_member")` |
+| **A compressed archive in the chain** (gzip, zstd, xz, legacy `.lzma` and LZ4 legacy frames from `lz4 -l`, what the kernel accepts) | Decoded with `lamfold::decode_stream`, and the archives inside folded in (0.1.2) |
+| A bzip2 or LZO (lzop) archive | Refused: `Unsupported("stream_bzip2")`, `Unsupported("stream_lzo")` |
+| A compressed archive inside a decompressed one | Refused as corrupt, as the kernel does |
 
-Most distributions compress the main archive of their initramfs, so today
-lamfold-cpio refuses those rather than showing only the uncompressed microcode
-archive in front of it. Reading them needs a streaming decoder in `lamfold`.
+The whole input is read into memory once (read-capped), and the decompressed
+members together are capped at `lamfold::MAX_BOOT_FILE_BYTES` (512 MiB). Debian
+13's own initramfs (57 MiB, a microcode archive and then a compressed main one)
+reads with every file identical to what `unmkinitramfs` extracts.
+`#![forbid(unsafe_code)]`.
 
-The whole input is read into memory once (read-capped), which suits an
-initramfs. `#![forbid(unsafe_code)]`.
+### Features
+
+`gzip`, `zstd`, `xz` (also the legacy `.lzma` format) and `lz4` enable the
+matching lamfold codec (all on by default). With one off, an archive that needs
+it is refused instead of read.
 
 ## Installation
 

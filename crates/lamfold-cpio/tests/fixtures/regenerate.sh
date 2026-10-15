@@ -10,10 +10,16 @@
 #                     archive has a symlink, an empty directory and three hard
 #                     links to one file, whose data newc stores once, on the
 #                     last link.
-#   chain_zstd.cpio   the same early archive + the main archive compressed
-#                     with zstd, which lamfold-cpio refuses.
+#   chain_<codec>.cpio  early + main compressed with gzip, zstd, xz (CRC32
+#                     check, as the kernel builds it), the legacy .lzma format
+#                     or lz4 -l (legacy frames), padded with zeros to a 4-byte
+#                     boundary, then a small uncompressed "late" archive, so
+#                     the reader has to find where the compressed member ends.
+#   chain_bzip2.cpio  early + bzip2 main: Recognised, refused.
+#   nested_gzip.cpio  early + gzip(gzip(main)): The kernel doesn't decompress
+#                     inside a decompressed member, so this is refused.
 #
-# Requires: GNU cpio, zstd. Usage: ./regenerate.sh
+# Requires: GNU cpio, gzip, zstd, xz, lz4, bzip2. Usage: ./regenerate.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -36,9 +42,31 @@ find "$WORK/early" "$WORK/main" -exec touch -h -d @1700000000 {} +
 
 archive() { (cd "$1" && find . -mindepth 1 | LC_ALL=C sort | cpio --quiet -o -H "$2" --reproducible); }
 
+mkdir -p "$WORK/late/etc"
+printf 'written by the late archive\n' > "$WORK/late/etc/late.conf"
+find "$WORK/late" -exec touch -h -d @1700000000 {} +
+
 archive "$WORK/early" newc > "$WORK/early.cpio"
 archive "$WORK/main" crc > "$WORK/main.cpio"
+archive "$WORK/late" newc > "$WORK/late.cpio"
 cat "$WORK/early.cpio" "$WORK/main.cpio" > "$HERE/chain_plain.cpio"
-zstd -q -19 -c "$WORK/main.cpio" > "$WORK/main.cpio.zst"
-cat "$WORK/early.cpio" "$WORK/main.cpio.zst" > "$HERE/chain_zstd.cpio"
-ls -l "$HERE"/chain_*.cpio
+
+# compressed <name> <command...>: early + the compressed main archive, zero
+# padded to a 4-byte boundary, + the late archive.
+compressed() {
+  local name="$1"; shift
+  "$@" < "$WORK/main.cpio" > "$WORK/main.$name"
+  truncate -s %4 "$WORK/main.$name"
+  cat "$WORK/early.cpio" "$WORK/main.$name" "$WORK/late.cpio" > "$HERE/chain_$name.cpio"
+}
+compressed gzip gzip -n -9 -c
+compressed zstd zstd -q -19 -c
+compressed xz xz -9 --check=crc32 -c
+compressed lzma xz --format=lzma -9 -c
+compressed lz4 lz4 -q -l -9 -c
+
+bzip2 -9 -c "$WORK/main.cpio" > "$WORK/main.bz2"
+cat "$WORK/early.cpio" "$WORK/main.bz2" > "$HERE/chain_bzip2.cpio"
+gzip -n -9 -c "$WORK/main.cpio" | gzip -n -9 -c > "$WORK/main.gz.gz"
+cat "$WORK/early.cpio" "$WORK/main.gz.gz" > "$HERE/nested_gzip.cpio"
+ls -l "$HERE"/chain_*.cpio "$HERE"/nested_gzip.cpio

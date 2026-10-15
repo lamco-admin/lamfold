@@ -27,6 +27,7 @@ structure it reads. Spec: `the lamfold design spec`.
 | `read_cap` — bounded-allocation hardening (no OOM on hostile sizes) | ✅ done + tested |
 | `BlockCache` — immutable decompressed-block LRU | ✅ done + tested |
 | `codec` registry — **deflate (raw+zlib), lz4 (block), zstd, xz, lzo** | ✅ all five wired + round-trip tested |
+| `stream`: `decode_stream` for a whole stream of unknown size (gzip, zstd, xz, legacy `.lzma`, LZ4 legacy frames), capped, reporting the input it used; `StreamCodec::sniff` | ✅ 0.1.5, used by `lamfold-cpio` for compressed initramfs members |
 | `BlockSource` / `SliceSource` — the byte source | ✅ done + tested |
 | `FoldFrontend` trait — the flock contract | ✅ defined |
 | `Verifier` (the shepherd) seam + `NoVerifier` | ✅ seam in; real fs-verity/composefs landed |
