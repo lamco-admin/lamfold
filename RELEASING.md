@@ -24,14 +24,15 @@ Two earlier mistakes are designed out:
 ### Substrate-only fix (the common case — e.g. read_cap, codec, cache)
 1. Bump **only** `crates/lamfold/Cargo.toml` `version` (e.g. `0.1.0 → 0.1.1`).
 2. `cargo test` (full workspace), then `cargo publish -p lamfold`.
-3. In the consumer (`lamboot-core/Cargo.toml`), bump **only** the `lamfold` pin
-   (`=0.1.0 → =0.1.1`). The frontend pins stay put — their `^0.1` dep resolves to
-   the new substrate. **Do not touch the frontends.**
+3. In the consumer (`lamboot-core/Cargo.toml`), raise **only** the `lamfold`
+   minimum (`"0.1.0"` to `"0.1.1"`) and run `cargo update -p lamfold`. The
+   frontend requirements stay put; their `^0.1` dep resolves to the new
+   substrate. **Do not touch the frontends.**
 
 ### A frontend's own code changes (e.g. lamfold-iso parser fix)
 1. Bump **only** that frontend's `version`.
 2. `cargo publish -p <that-frontend>`.
-3. Bump only that frontend's pin in the consumer.
+3. Raise only that frontend's minimum in the consumer and `cargo update -p` it.
 
 ### A breaking substrate change (rare)
 A `0.1 → 0.2` substrate bump *does* require republishing every frontend (their
@@ -41,6 +42,10 @@ everything else.
 
 ## Consumer pinning
 
-`lamboot-core` exact-pins each crate (`=0.1.0`) for the **offline Debian
-`-Zbuild-std` build** (reproducible, no network). Exact pins on the *consumer*
-side are fine — they bump per-crate independently and do not force any republish.
+`lamboot-core` requires each crate as a minimum version (`"0.1.1"`), not an
+exact pin (LamBoot decision 37, 2026-10-15). Debian builds LamBoot offline
+against whatever its archive holds, and an exact pin breaks that build whenever
+the archive moves. LamBoot's `Cargo.lock` records exactly what it builds, so a
+new release only reaches LamBoot through a deliberate `cargo update -p`. The
+workspace's own third-party dependencies are minimums at the Debian archive's
+versions for the same reason (decision 31).
