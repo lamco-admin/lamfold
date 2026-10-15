@@ -45,6 +45,11 @@ const ET_CATALOG_PTR_OFFSET: usize = 71;
 const ZISOFS_MAGIC: [u8; 8] = [0x37, 0xE4, 0x53, 0x96, 0xC9, 0xDB, 0xD6, 0x07];
 /// Bound on the descriptor scan — a real volume has a handful, never this many.
 const MAX_VD_SCAN: u64 = 64;
+/// Bound on a record's chain of Rock Ridge continuation areas. Real long names
+/// and link targets need one or two.
+const MAX_CONTINUATIONS: usize = 16;
+/// The interning key of the root, which no directory record names.
+const ROOT_KEY: (u32, u32) = (u32::MAX, u32::MAX);
 
 /// Directory-record field offsets (ECMA-119 §9.1).
 mod dr {
@@ -58,6 +63,11 @@ mod dr {
 
 #[derive(Clone)]
 struct Inode {
+    /// The directory record this node came from: its directory's extent LBA
+    /// and its byte offset there. xorriso gives every empty file and every
+    /// symlink the same extent LBA, so the record, not the extent, is what
+    /// makes a node distinct.
+    key: (u32, u32),
     lba: u32,
     size: u32,
     kind: FileKind,
@@ -74,9 +84,9 @@ pub struct Iso9660<S: BlockSource> {
     src: S,
     block_size: u32,
     nodes: Vec<Inode>,
-    /// Intern table: extent LBA → node index, so repeated walks don't grow the
-    /// node list without bound.
-    by_lba: BTreeMap<u32, NodeId>,
+    /// Intern table: directory record → node index, so repeated walks don't
+    /// grow the node list without bound.
+    by_record: BTreeMap<(u32, u32), NodeId>,
     /// Rock Ridge present on this volume (SUSP `SP` found in the root).
     rock_ridge: bool,
     /// SUSP skip length (bytes to ignore at the start of each System Use area).
@@ -90,13 +100,13 @@ pub struct Iso9660<S: BlockSource> {
 
 impl<S: BlockSource> Iso9660<S> {
     fn intern(&mut self, inode: Inode) -> NodeId {
-        if let Some(&id) = self.by_lba.get(&inode.lba) {
+        if let Some(&id) = self.by_record.get(&inode.key) {
             return id;
         }
-        let lba = inode.lba;
+        let key = inode.key;
         let id = self.nodes.len() as NodeId;
         self.nodes.push(inode);
-        self.by_lba.insert(lba, id);
+        self.by_record.insert(key, id);
         id
     }
 
@@ -139,6 +149,7 @@ impl<S: BlockSource> Iso9660<S> {
     /// Iterate the records in a directory extent, invoking `f` for each non-dot
     /// entry with (name, child Inode).
     fn for_each_entry(&mut self, dir: Inode, mut f: impl FnMut(String, Inode)) -> Result<()> {
+        let dir_lba = dir.lba;
         let buf = self.read_dir_extent(dir)?;
         let bs = self.block_size as usize;
         let mut pos = 0usize;
@@ -192,7 +203,7 @@ impl<S: BlockSource> Iso9660<S> {
                     let su_start = dr::FILE_ID + fi_len + pad;
                     if let Some(su) = rec.get(su_start..) {
                         let su = su.get(self.susp_skip..).unwrap_or(&[]);
-                        let rr = rock_ridge::parse_su(su);
+                        let rr = self.parse_rock_ridge(su)?;
                         if let Some(n) = rr.name {
                             name = n;
                         }
@@ -206,6 +217,7 @@ impl<S: BlockSource> Iso9660<S> {
                 f(
                     name,
                     Inode {
+                        key: (dir_lba, pos as u32),
                         lba,
                         size,
                         kind,
@@ -217,6 +229,32 @@ impl<S: BlockSource> Iso9660<S> {
             pos += len;
         }
         Ok(())
+    }
+
+    /// Parse a record's Rock Ridge entries, following its chain of continuation
+    /// areas (`CE`), which hold what didn't fit in the record: the rest of a
+    /// long name or link target, for example. A continuation area that lies
+    /// outside the volume is corrupt.
+    fn parse_rock_ridge(&mut self, su: &[u8]) -> Result<rock_ridge::RrInfo> {
+        let mut parser = rock_ridge::RrParser::default();
+        let mut next = parser.feed(su);
+        let mut hops = 0;
+        while let Some(ce) = next {
+            hops += 1;
+            if hops > MAX_CONTINUATIONS || ce.len == 0 || ce.len > self.block_size {
+                return Err(FoldError::Corrupt("iso: bad Rock Ridge continuation area"));
+            }
+            let at = u64::from(ce.block) * u64::from(self.block_size) + u64::from(ce.offset);
+            if at + u64::from(ce.len) > self.src.len() {
+                return Err(FoldError::Corrupt(
+                    "iso: Rock Ridge continuation past the volume",
+                ));
+            }
+            let mut area = vec![0u8; ce.len as usize];
+            self.src.read_at(at, &mut area)?;
+            next = parser.feed(&area);
+        }
+        Ok(parser.finish())
     }
 
     /// The El Torito **UEFI** boot image as a byte-range on this source, or
@@ -234,7 +272,23 @@ impl<S: BlockSource> Iso9660<S> {
         }
         let mut cat = vec![0u8; VD_SIZE];
         self.src.read_at(off, &mut cat)?;
-        Ok(el_torito::parse_catalog(&cat))
+        let Some(mut image) = el_torito::parse_catalog(&cat) else {
+            return Ok(None);
+        };
+        // A sector count of 0 or 1 doesn't give the image's size; archiso's
+        // appended EFI partition is entered that way. The image is a FAT file
+        // system, so its own boot sector does.
+        if image.sectors <= 1 {
+            let mut boot = [0u8; 512];
+            let at = u64::from(image.lba) * u64::from(self.block_size);
+            if at + 512 <= self.src.len() {
+                self.src.read_at(at, &mut boot)?;
+                if let Some(sectors) = el_torito::fat_image_sectors(&boot) {
+                    image.sectors = sectors;
+                }
+            }
+        }
+        Ok(Some(image))
     }
 
     /// Read a zisofs (paged-zlib) compressed file: the data extent begins with a
@@ -324,7 +378,7 @@ impl<S: BlockSource> FoldFrontend<S> for Iso9660<S> {
             src,
             block_size: 2048,
             nodes: Vec::new(),
-            by_lba: BTreeMap::new(),
+            by_record: BTreeMap::new(),
             rock_ridge: false,
             susp_skip: 0,
             joliet: false,
@@ -485,6 +539,7 @@ fn root_record(vd: &[u8]) -> Result<Inode> {
         .get(156..156 + 34)
         .ok_or(FoldError::Corrupt("iso: short root directory record"))?;
     Ok(Inode {
+        key: ROOT_KEY,
         lba: le_u32(rdr, dr::EXTENT_LBA_LE)?,
         size: le_u32(rdr, dr::DATA_LEN_LE)?,
         kind: FileKind::Directory,

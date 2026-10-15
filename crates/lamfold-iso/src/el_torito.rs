@@ -81,6 +81,25 @@ fn parse_entry(e: &[u8]) -> Option<UefiImage> {
     Some(UefiImage { lba, sectors })
 }
 
+/// The size of a FAT image in 512-byte sectors, from its boot sector's BPB,
+/// or `None` when the sector isn't a FAT boot sector.
+pub fn fat_image_sectors(boot: &[u8]) -> Option<u32> {
+    if boot.get(510..512)? != [0x55, 0xAA] {
+        return None;
+    }
+    let bytes_per_sector = u32::from(u16::from_le_bytes([*boot.get(11)?, *boot.get(12)?]));
+    if !matches!(bytes_per_sector, 512 | 1024 | 2048 | 4096) {
+        return None;
+    }
+    let total16 = u32::from(u16::from_le_bytes([*boot.get(19)?, *boot.get(20)?]));
+    let total32 = u32::from_le_bytes(boot.get(32..36)?.try_into().ok()?);
+    let total = if total16 != 0 { total16 } else { total32 };
+    if total == 0 {
+        return None;
+    }
+    total.checked_mul(bytes_per_sector / 512)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
